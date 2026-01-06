@@ -34,10 +34,10 @@ const parseFileInput = document.getElementById("parse-file");
 const parseMessageInput = document.getElementById("parse-message");
 
 const MANIFEST_URL = "docs/manifest.json";
-const FORMAT_VERSION = 1;
+const FORMAT_VERSION = 2;
 const DEFAULT_INACTIVITY_MINUTES = 30;
-const TOKEN_BATCH_SIZE = 80;
 const ENCRYPTED_EXTENSION = ".md.data";
+const MARKDOWN_CHUNK_TARGET = 2000;
 const LIBRARIES = {
   marked: "vendor/marked.min.js",
   dompurify: "vendor/purify.min.js",
@@ -54,10 +54,13 @@ let hasDeparsedContent = false;
 let inactivityTimer = null;
 let inactivityLimitMs = DEFAULT_INACTIVITY_MINUTES * 60 * 1000;
 let currentFilePath = "";
-let pendingTokens = [];
+const chunkTextDecoder = new TextDecoder();
 let allRepoEntries = [];
 let bundleEntries = [];
 let librariesLoaded = false;
+let activePayload = null;
+let chunkDecoder = null;
+let chunkCursor = 0;
 const broadcast = "BroadcastChannel" in window ? new BroadcastChannel("app-channel") : null;
 
 document.documentElement.dataset.theme = "dark";
@@ -175,7 +178,7 @@ function renderMarkdownFallback(markdown) {
       .replace(/\[(.*?)\]\((.*?)\)/g, "<a href=\"$2\" target=\"_blank\" rel=\"noopener\">$1</a>");
     htmlLines.push(`<p>${withInline}</p>`);
   }
-  outputEl.innerHTML = htmlLines.join("\n");
+  return htmlLines.join("\n");
 }
 
 function sanitizeHtml(html) {
@@ -230,15 +233,72 @@ async function ensureLibrariesLoaded() {
   librariesLoaded = true;
 }
 
-function renderTokensBatch() {
-  const batch = pendingTokens.splice(0, TOKEN_BATCH_SIZE);
-  if (!batch.length) {
-    loadMoreBtn.hidden = true;
+function splitMarkdownIntoChunks(markdown, targetSize = MARKDOWN_CHUNK_TARGET) {
+  const lines = markdown.split("\n");
+  const chunks = [];
+  let buffer = "";
+  let insideFence = false;
+
+  const pushBuffer = () => {
+    if (buffer.trim()) {
+      chunks.push(buffer.replace(/\n{3,}/g, "\n\n"));
+    }
+    buffer = "";
+  };
+
+  lines.forEach((line, index) => {
+    if (/^\s*(```|~~~)/.test(line)) {
+      insideFence = !insideFence;
+    }
+    const suffix = index === lines.length - 1 ? "" : "\n";
+    buffer += line + suffix;
+    if (!insideFence && buffer.length >= targetSize) {
+      pushBuffer();
+    }
+  });
+
+  pushBuffer();
+  return chunks;
+}
+
+function scrambleBytes(bytes) {
+  const mask = crypto.getRandomValues(new Uint8Array(bytes.length));
+  const scrambled = new Uint8Array(bytes.length);
+  for (let i = 0; i < bytes.length; i += 1) {
+    scrambled[i] = bytes[i] ^ mask[i];
+  }
+  bytes.fill(0);
+  return { scrambled, mask };
+}
+
+function descrambleToString(chunk) {
+  const bytes = new Uint8Array(chunk.scrambled.length);
+  for (let i = 0; i < chunk.scrambled.length; i += 1) {
+    bytes[i] = chunk.scrambled[i] ^ chunk.mask[i];
+  }
+  const text = chunkTextDecoder.decode(bytes);
+  bytes.fill(0);
+  return text;
+}
+
+function scrubChunk(chunk) {
+  if (!chunk) {
     return;
   }
-  const html = window.marked
-    ? window.marked.parser(batch)
-    : escapeHtml(batch.map((token) => token.raw || "").join(""));
+  chunk.scrambled?.fill(0);
+  chunk.mask?.fill(0);
+  chunk.scrambled = null;
+  chunk.mask = null;
+}
+
+function resetChunkRenderState() {
+  activePayload = null;
+  chunkDecoder = null;
+  chunkCursor = 0;
+}
+
+async function appendMarkdownChunk(markdown) {
+  const html = window.marked ? window.marked.parse(markdown) : renderMarkdownFallback(markdown);
   const sanitized = sanitizeHtml(html);
   const fragment = document.createElement("div");
   fragment.innerHTML = sanitized;
@@ -248,43 +308,75 @@ function renderTokensBatch() {
     }
   });
   outputEl.append(...fragment.childNodes);
-  loadMoreBtn.hidden = pendingTokens.length === 0;
 }
 
-async function renderMarkdown(markdown) {
-  copyStatus.textContent = "";
-  outputEl.innerHTML = "";
-  hasDeparsedContent = Boolean(markdown.trim());
+async function renderNextChunk() {
+  if (!activePayload || !chunkDecoder || chunkCursor >= activePayload.chunks.length) {
+    loadMoreBtn.hidden = true;
+    return;
+  }
+
   resetInactivityTimer();
+  const chunkEntry = activePayload.chunks[chunkCursor];
+  chunkCursor += 1;
 
   const start = performance.now();
+  let scrambled = null;
+  let markdown = "";
   try {
-    await ensureLibrariesLoaded();
-    pendingTokens = window.marked ? window.marked.lexer(markdown) : [];
-    renderTokensBatch();
-    if (pendingTokens.length > 0) {
-      setStatus("Large file detected. Use “Load more” to continue rendering.");
-    }
+    const decryptedBytes = await chunkDecoder(chunkEntry, chunkCursor - 1);
+    scrambled = scrambleBytes(decryptedBytes);
+    markdown = descrambleToString(scrambled);
+    await appendMarkdownChunk(markdown);
   } catch (error) {
-    renderMarkdownFallback(markdown);
-    loadMoreBtn.hidden = true;
+    setStatus(`Failed to render chunk: ${error.message}`, true);
+  } finally {
+    scrubChunk(scrambled);
+    markdown = "";
   }
+
   const duration = Math.round(performance.now() - start);
   perfIndicator.textContent = `Render: ${duration}ms`;
+  loadMoreBtn.hidden = chunkCursor >= activePayload.chunks.length;
+  if (!loadMoreBtn.hidden) {
+    setStatus("Use “Load more” to render the next chunk.");
+  }
+}
+
+async function renderMarkdown(payload, accessPhrase) {
+  copyStatus.textContent = "";
+  outputEl.innerHTML = "";
+  loadMoreBtn.hidden = true;
+  resetInactivityTimer();
+
+  if (!payload?.chunks?.length) {
+    hasDeparsedContent = false;
+    return;
+  }
+
+  hasDeparsedContent = true;
+  resetChunkRenderState();
+
+  try {
+    if (!payloadCodec.createChunkDecoder) {
+      throw new Error("Decoding module unavailable.");
+    }
+    await ensureLibrariesLoaded();
+    activePayload = payload;
+    chunkDecoder = await payloadCodec.createChunkDecoder(payload, accessPhrase, FORMAT_VERSION);
+    await renderNextChunk();
+  } catch (error) {
+    setStatus(`Render failed: ${error.message}`, true);
+    resetChunkRenderState();
+  }
 }
 
 async function encodeContent(markdown, accessPhrase) {
-  if (!payloadCodec.encodePayload) {
+  if (!payloadCodec.encodePayloadChunks) {
     throw new Error("Encoding module unavailable.");
   }
-  return payloadCodec.encodePayload(markdown, accessPhrase, FORMAT_VERSION);
-}
-
-async function decodeContent(payload, accessPhrase) {
-  if (!payloadCodec.decodePayload) {
-    throw new Error("Decoding module unavailable.");
-  }
-  return payloadCodec.decodePayload(payload, accessPhrase, FORMAT_VERSION);
+  const chunks = splitMarkdownIntoChunks(markdown);
+  return payloadCodec.encodePayloadChunks(chunks, accessPhrase, FORMAT_VERSION);
 }
 
 function isEncryptedPayloadFile(name) {
@@ -295,18 +387,27 @@ function assertEncryptedPayload(payload) {
   if (!payload || typeof payload !== "object") {
     throw new Error("Invalid encrypted payload.");
   }
-  const requiredKeys = ["version", "seed", "offset", "payload"];
-  requiredKeys.forEach((key) => {
-    if (!(key in payload)) {
-      throw new Error("Encrypted payload missing required fields.");
-    }
-  });
   if (typeof payload.version !== "number") {
     throw new Error("Encrypted payload has invalid version.");
   }
-  ["seed", "offset", "payload"].forEach((key) => {
-    if (typeof payload[key] !== "string" || payload[key].trim() === "") {
-      throw new Error("Encrypted payload has invalid data.");
+  if (payload.version !== FORMAT_VERSION) {
+    throw new Error(`Unsupported format version: ${payload.version}`);
+  }
+  if (typeof payload.seed !== "string" || payload.seed.trim() === "") {
+    throw new Error("Encrypted payload has invalid data.");
+  }
+  if (!Array.isArray(payload.chunks) || payload.chunks.length === 0) {
+    throw new Error("Encrypted payload is missing chunk data.");
+  }
+  payload.chunks.forEach((chunk) => {
+    if (
+      !chunk ||
+      typeof chunk.offset !== "string" ||
+      chunk.offset.trim() === "" ||
+      typeof chunk.payload !== "string" ||
+      chunk.payload.trim() === ""
+    ) {
+      throw new Error("Encrypted payload has invalid chunk data.");
     }
   });
 }
@@ -432,6 +533,13 @@ function normalizeRepoPath(path) {
     return "docs";
   }
   return trimmed.replace(/^\/+|\/+$/g, "");
+}
+
+function ensureEncryptedExtension(path) {
+  if (!path) {
+    return "";
+  }
+  return path.endsWith(ENCRYPTED_EXTENSION) ? path : `${path}${ENCRYPTED_EXTENSION}`;
 }
 
 function getRepoCategory(entryPath, rootPath) {
@@ -606,27 +714,24 @@ async function handleRepoFileLoad(file) {
   setStatus("Loading encrypted payload...");
   setOutputState("");
   try {
-    let markdown = "";
     let payloadSize = file.size || 0;
+    let payload = null;
     if (file.source === "bundle") {
-      const payload = parsedCache.get(file.path);
+      payload = parsedCache.get(file.path);
       if (!payload) {
         throw new Error(`Missing export data for ${file.path}.`);
       }
       assertEncryptedPayload(payload);
-      markdown = await decodeContent(payload, getAccessPhraseForFile(file.path, accessPhrase));
       payloadSize = JSON.stringify(payload).length;
     } else {
       const response = await fetchRawFile(owner, repo, branch, file.path, token);
-      const payload = await response.json();
+      payload = await response.json();
       assertEncryptedPayload(payload);
       parsedCache.set(file.path, payload);
-      markdown = await decodeContent(payload, getAccessPhraseForFile(file.path, accessPhrase));
       payloadSize = JSON.stringify(payload).length;
     }
     currentFilePath = file.path;
-    await renderMarkdown(markdown);
-    markdown = "";
+    await renderMarkdown(payload, getAccessPhraseForFile(file.path, accessPhrase));
     setStatus("File loaded successfully.", false, true);
     setOutputState("success");
     updateHistory(file.path, payloadSize);
@@ -683,10 +788,8 @@ async function handleSampleLoad() {
     const payload = await response.json();
     assertEncryptedPayload(payload);
     parsedCache.set(path, payload);
-    let markdown = await decodeContent(payload, getAccessPhraseForFile(path, accessPhrase));
     currentFilePath = path;
-    await renderMarkdown(markdown);
-    markdown = "";
+    await renderMarkdown(payload, getAccessPhraseForFile(path, accessPhrase));
     setStatus("Sample processed successfully.", false, true);
     setOutputState("success");
     updateHistory(path, JSON.stringify(payload).length);
@@ -722,10 +825,8 @@ async function handleFileLoad() {
     const payload = JSON.parse(contents);
     assertEncryptedPayload(payload);
     parsedCache.set(file.name, payload);
-    let markdown = await decodeContent(payload, getAccessPhraseForFile(file.name, accessPhrase));
     currentFilePath = file.name;
-    await renderMarkdown(markdown);
-    markdown = "";
+    await renderMarkdown(payload, getAccessPhraseForFile(file.name, accessPhrase));
     setStatus("Local file processed successfully.", false, true);
     setOutputState("success");
     updateHistory(file.name, file.size);
@@ -746,6 +847,7 @@ function clearDeparsedContent(reason) {
   parsedCache.clear();
   accessPhraseStore.clear();
   historyStore.clear();
+  resetChunkRenderState();
   setOutputState("");
   copyStatus.textContent = "";
   loadMoreBtn.hidden = true;
@@ -872,7 +974,7 @@ async function parseAndUpload() {
   const owner = repoOwnerInput.value.trim();
   const repo = repoNameInput.value.trim();
   const branch = repoBranchInput.value.trim() || "main";
-  const targetPath = parseTitleInput.value.trim();
+  const targetPath = ensureEncryptedExtension(parseTitleInput.value.trim());
   const accessPhrase = accessPhraseInput.value.trim();
   const token = getAuthToken();
   const commitMessage = parseMessageInput.value.trim();
@@ -959,7 +1061,7 @@ function registerShortcuts(event) {
     event.preventDefault();
   }
   if (event.key === "m") {
-    renderTokensBatch();
+    renderNextChunk();
     event.preventDefault();
   }
 }
@@ -969,7 +1071,7 @@ loadFileBtn.addEventListener("click", handleFileLoad);
 loadRepoBtn.addEventListener("click", loadRepoFiles);
 themeToggle.addEventListener("click", toggleTheme);
 copyOutputBtn.addEventListener("click", copyDeparsedContent);
-loadMoreBtn.addEventListener("click", renderTokensBatch);
+loadMoreBtn.addEventListener("click", renderNextChunk);
 searchInput.addEventListener("input", handleSearch);
 categoryFilter.addEventListener("change", handleSearch);
 inactivityTimeoutInput.addEventListener("input", updateInactivityTimeout);

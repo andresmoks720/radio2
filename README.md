@@ -31,10 +31,14 @@ Store the payload in JSON:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "seed": "base64",
-  "offset": "base64",
-  "payload": "base64"
+  "chunks": [
+    {
+      "offset": "base64",
+      "payload": "base64"
+    }
+  ]
 }
 ```
 
