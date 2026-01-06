@@ -18,8 +18,6 @@ const themeToggle = document.getElementById("theme-toggle");
 const copyOutputBtn = document.getElementById("copy-output");
 const copyStatus = document.getElementById("copy-status");
 const loadMoreBtn = document.getElementById("load-more");
-const accessStrength = document.getElementById("access-strength");
-const accessFeedback = document.getElementById("access-feedback");
 const searchInput = document.getElementById("search-input");
 const categoryFilter = document.getElementById("category-filter");
 const exportTextBtn = document.getElementById("export-text");
@@ -837,23 +835,6 @@ function updateInactivityTimeout() {
   resetInactivityTimer();
 }
 
-function evaluateAccessStrength(accessPhrase) {
-  let score = 0;
-  if (accessPhrase.length >= 8) score += 1;
-  if (/[A-Z]/.test(accessPhrase) && /[a-z]/.test(accessPhrase)) score += 1;
-  if (/\d/.test(accessPhrase)) score += 1;
-  if (/[^A-Za-z0-9]/.test(accessPhrase)) score += 1;
-  return score;
-}
-
-function updateAccessStrength() {
-  const accessPhrase = accessPhraseInput.value;
-  const score = evaluateAccessStrength(accessPhrase);
-  accessStrength.value = score;
-  const feedback = ["Enter an access phrase", "Weak", "Fair", "Good", "Strong"];
-  accessFeedback.textContent = feedback[score] || "Strong";
-}
-
 function toggleAccessVisibility() {
   const isHidden = accessPhraseInput.type === "password";
   accessPhraseInput.type = isHidden ? "text" : "password";
@@ -1055,7 +1036,6 @@ accessToggle.addEventListener("click", toggleAccessVisibility);
 themeToggle.addEventListener("click", toggleTheme);
 copyOutputBtn.addEventListener("click", copyDeparsedContent);
 loadMoreBtn.addEventListener("click", renderTokensBatch);
-accessPhraseInput.addEventListener("input", updateAccessStrength);
 searchInput.addEventListener("input", handleSearch);
 categoryFilter.addEventListener("change", handleSearch);
 inactivityTimeoutInput.addEventListener("input", updateInactivityTimeout);
@@ -1086,6 +1066,5 @@ if (broadcast) {
   };
 }
 
-updateAccessStrength();
 updateInactivityTimeout();
 loadSamples();
