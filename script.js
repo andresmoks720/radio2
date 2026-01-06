@@ -14,13 +14,10 @@ const repoTokenInput = document.getElementById("repo-token");
 const repoPathInput = document.getElementById("repo-path");
 const inactivityTimeoutInput = document.getElementById("inactivity-timeout");
 const repoSpinner = document.getElementById("repo-spinner");
-const accessToggle = document.getElementById("toggle-access");
 const themeToggle = document.getElementById("theme-toggle");
 const copyOutputBtn = document.getElementById("copy-output");
 const copyStatus = document.getElementById("copy-status");
 const loadMoreBtn = document.getElementById("load-more");
-const accessStrength = document.getElementById("access-strength");
-const accessFeedback = document.getElementById("access-feedback");
 const searchInput = document.getElementById("search-input");
 const categoryFilter = document.getElementById("category-filter");
 const exportTextBtn = document.getElementById("export-text");
@@ -589,7 +586,7 @@ async function handleRepoFileLoad(file) {
   }
 
   if (file.parsed && !getAccessPhraseForFile(file.path, accessPhrase)) {
-    setStatus("Enter an access phrase before de-parsing files.", true);
+    setStatus("Enter a session code before de-parsing files.", true);
     return;
   }
 
@@ -671,7 +668,7 @@ async function handleSampleLoad() {
   }
 
   if (!accessPhrase) {
-    setStatus("Enter an access phrase before de-parsing.", true);
+    setStatus("Enter a session code before de-parsing.", true);
     return;
   }
 
@@ -710,7 +707,7 @@ async function handleFileLoad() {
   }
 
   if (!accessPhrase) {
-    setStatus("Enter an access phrase before de-parsing.", true);
+    setStatus("Enter a session code before de-parsing.", true);
     return;
   }
 
@@ -780,30 +777,6 @@ function updateInactivityTimeout() {
     inactivityLimitMs = Math.round(minutes * 60 * 1000);
   }
   resetInactivityTimer();
-}
-
-function evaluateAccessStrength(accessPhrase) {
-  let score = 0;
-  if (accessPhrase.length >= 8) score += 1;
-  if (/[A-Z]/.test(accessPhrase) && /[a-z]/.test(accessPhrase)) score += 1;
-  if (/\d/.test(accessPhrase)) score += 1;
-  if (/[^A-Za-z0-9]/.test(accessPhrase)) score += 1;
-  return score;
-}
-
-function updateAccessStrength() {
-  const accessPhrase = accessPhraseInput.value;
-  const score = evaluateAccessStrength(accessPhrase);
-  accessStrength.value = score;
-  const feedback = ["Enter an access phrase", "Weak", "Fair", "Good", "Strong"];
-  accessFeedback.textContent = feedback[score] || "Strong";
-}
-
-function toggleAccessVisibility() {
-  const isHidden = accessPhraseInput.type === "password";
-  accessPhraseInput.type = isHidden ? "text" : "password";
-  accessToggle.textContent = isHidden ? "Hide" : "Show";
-  accessToggle.setAttribute("aria-pressed", String(isHidden));
 }
 
 function toggleTheme() {
@@ -908,7 +881,7 @@ async function parseAndUpload() {
     return;
   }
   if (!accessPhrase) {
-    setStatus("Provide an access phrase and markdown content.", true);
+    setStatus("Provide a session code and markdown content.", true);
     return;
   }
   if (!token) {
@@ -923,7 +896,7 @@ async function parseAndUpload() {
       markdown = await parseFileInput.files[0].text();
     }
     if (!markdown) {
-      setStatus("Provide an access phrase and markdown content.", true);
+      setStatus("Provide a session code and markdown content.", true);
       return;
     }
     const payload = await encodeContent(markdown, accessPhrase);
@@ -971,10 +944,6 @@ function registerShortcuts(event) {
     searchInput.focus();
     event.preventDefault();
   }
-  if (event.key === "p") {
-    toggleAccessVisibility();
-    event.preventDefault();
-  }
   if (event.key === "t") {
     toggleTheme();
     event.preventDefault();
@@ -996,11 +965,9 @@ function registerShortcuts(event) {
 loadSampleBtn.addEventListener("click", handleSampleLoad);
 loadFileBtn.addEventListener("click", handleFileLoad);
 loadRepoBtn.addEventListener("click", loadRepoFiles);
-accessToggle.addEventListener("click", toggleAccessVisibility);
 themeToggle.addEventListener("click", toggleTheme);
 copyOutputBtn.addEventListener("click", copyDeparsedContent);
 loadMoreBtn.addEventListener("click", renderTokensBatch);
-accessPhraseInput.addEventListener("input", updateAccessStrength);
 searchInput.addEventListener("input", handleSearch);
 categoryFilter.addEventListener("change", handleSearch);
 inactivityTimeoutInput.addEventListener("input", updateInactivityTimeout);
@@ -1031,6 +998,5 @@ if (broadcast) {
   };
 }
 
-updateAccessStrength();
 updateInactivityTimeout();
 loadSamples();
