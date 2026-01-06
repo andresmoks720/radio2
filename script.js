@@ -42,6 +42,7 @@ const FORMAT_VERSION = 2;
 const DEFAULT_INACTIVITY_MINUTES = 60;
 const DATA_EXTENSION = ".md.data";
 const MARKDOWN_CHUNK_TARGET = 2000;
+const AUTO_LOAD_ROOT_MARGIN = "240px";
 const LIBRARIES = {
   marked: "vendor/marked.min.js",
   dompurify: "vendor/purify.min.js",
@@ -65,6 +66,8 @@ let activePayload = null;
 let chunkDecoder = null;
 let chunkCursor = 0;
 let searchRunId = 0;
+let isChunkLoading = false;
+let autoLoadObserver = null;
 const broadcast = "BroadcastChannel" in window ? new BroadcastChannel("app-channel") : null;
 
 document.documentElement.dataset.theme = "dark";
@@ -322,14 +325,16 @@ async function appendMarkdownChunk(markdown) {
 }
 
 async function renderNextChunk() {
-  if (!activePayload || !chunkDecoder || chunkCursor >= activePayload.chunks.length) {
+  if (!activePayload || !chunkDecoder || chunkCursor >= activePayload.chunks.length || isChunkLoading) {
     loadMoreBtn.hidden = true;
+    updateAutoLoadObserver();
     return;
   }
 
   resetInactivityTimer();
   const chunkEntry = activePayload.chunks[chunkCursor];
   chunkCursor += 1;
+  isChunkLoading = true;
 
   const start = performance.now();
   let scrambled = null;
@@ -344,13 +349,38 @@ async function renderNextChunk() {
   } finally {
     scrubChunk(scrambled);
     markdown = "";
+    isChunkLoading = false;
   }
 
   const duration = Math.round(performance.now() - start);
   perfIndicator.textContent = `Render: ${duration}ms`;
   loadMoreBtn.hidden = chunkCursor >= activePayload.chunks.length;
   if (!loadMoreBtn.hidden) {
-    setStatus("Use “Load more” to render the next chunk.");
+    setStatus("More content will load near the end of the page.");
+  }
+  updateAutoLoadObserver();
+}
+
+function updateAutoLoadObserver() {
+  if (!("IntersectionObserver" in window)) {
+    return;
+  }
+  if (!autoLoadObserver) {
+    autoLoadObserver = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            renderNextChunk();
+          }
+        });
+      },
+      { root: null, rootMargin: AUTO_LOAD_ROOT_MARGIN, threshold: 0.1 }
+    );
+  }
+  if (loadMoreBtn.hidden) {
+    autoLoadObserver.unobserve(loadMoreBtn);
+  } else {
+    autoLoadObserver.observe(loadMoreBtn);
   }
 }
 
@@ -1007,10 +1037,57 @@ async function createPlaintextStream(payload, accessPhrase, onProgress) {
   });
 }
 
-async function buildPlaintextBlob(payload, accessPhrase, onProgress) {
+async function buildPlaintextText(payload, accessPhrase, onProgress) {
   const stream = await createPlaintextStream(payload, accessPhrase, onProgress);
   const response = new Response(stream);
-  return response.blob();
+  return response.text();
+}
+
+async function fallbackExecCommandCopy(text) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("readonly", "");
+  ta.style.position = "fixed";
+  ta.style.left = "-9999px";
+  ta.style.top = "0";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  ta.setSelectionRange(0, ta.value.length);
+
+  let ok = false;
+  try {
+    ok = document.execCommand("copy");
+  } catch (error) {
+    ok = false;
+  } finally {
+    ta.value = "";
+    ta.remove();
+  }
+  return ok;
+}
+
+function isClipboardContextAllowed() {
+  const { protocol, hostname } = window.location;
+  return (
+    protocol === "https:" ||
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "[::1]"
+  );
+}
+
+async function tryClipboardWrite(text) {
+  if (!isClipboardContextAllowed() || !navigator.clipboard?.writeText) {
+    return { ok: false, reason: "unavailable" };
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, reason: error?.name || "error" };
+  }
 }
 
 async function copyDeparsedContent() {
@@ -1023,14 +1100,28 @@ async function copyDeparsedContent() {
     copyStatus.textContent = "Enter a session code before copying.";
     return;
   }
+  copyStatus.textContent = "Copying content...";
+  let text = "";
   try {
-    copyStatus.textContent = "Copying content...";
-    const blob = await buildPlaintextBlob(activePayload, accessPhrase);
-    await navigator.clipboard.write([new ClipboardItem({ "text/plain": blob })]);
-    copyStatus.textContent = "Processed content copied.";
-    showToast("Copied to clipboard");
+    text = await buildPlaintextText(activePayload, accessPhrase);
+    const result = await tryClipboardWrite(text);
+    if (result.ok) {
+      copyStatus.textContent = "Copied to clipboard.";
+      showToast("Copied to clipboard");
+      return;
+    }
+    const ok = await fallbackExecCommandCopy(text);
+    if (ok) {
+      copyStatus.textContent = "Copied (fallback mode).";
+      showToast("Copied to clipboard");
+    } else {
+      copyStatus.textContent = `Copy blocked (${result.reason}). Try: use the Copy button, keep the tab focused, allow clipboard in site settings, avoid embedded frames or guest mode.`;
+    }
   } catch (error) {
-    copyStatus.textContent = "Copy failed. Try selecting text manually.";
+    const name = error?.name || "error";
+    copyStatus.textContent = `Copy blocked (${name}). Try: use the Copy button, keep the tab focused, allow clipboard in site settings, avoid embedded frames or guest mode.`;
+  } finally {
+    text = "";
   }
 }
 
