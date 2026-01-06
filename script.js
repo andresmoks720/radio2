@@ -63,7 +63,7 @@ let pendingTokens = [];
 let allRepoEntries = [];
 let bundleEntries = [];
 let librariesLoaded = false;
-const broadcast = "BroadcastChannel" in window ? new BroadcastChannel("parsed-md") : null;
+const broadcast = "BroadcastChannel" in window ? new BroadcastChannel("app-channel") : null;
 
 document.documentElement.dataset.theme = "dark";
 
@@ -687,7 +687,7 @@ async function handleRepoFileLoad(file) {
     renderFileGroups(getFilteredEntries([...allRepoEntries, ...bundleEntries]));
     updatePreview(file);
     if (broadcast) {
-      broadcast.postMessage({ type: "deparsed", file: file.path });
+      broadcast.postMessage({ type: "content-updated", file: file.path });
     }
     markdown = "";
   } catch (error) {
@@ -746,7 +746,7 @@ async function handleSampleLoad() {
     updateHistory(path, markdown);
     updatePreview({ name: path.split("/").pop(), path, parsed: true, size: JSON.stringify(payload).length });
     if (broadcast) {
-      broadcast.postMessage({ type: "deparsed", file: path });
+      broadcast.postMessage({ type: "content-updated", file: path });
     }
     markdown = "";
   } catch (error) {
@@ -785,7 +785,7 @@ async function handleFileLoad() {
     updateHistory(file.name, markdown);
     updatePreview({ name: file.name, path: file.name, parsed: true, size: file.size });
     if (broadcast) {
-      broadcast.postMessage({ type: "deparsed", file: file.name });
+      broadcast.postMessage({ type: "content-updated", file: file.name });
     }
     markdown = "";
   } catch (error) {
@@ -1080,7 +1080,7 @@ window.addEventListener("beforeunload", (event) => {
 
 if (broadcast) {
   broadcast.onmessage = (event) => {
-    if (event.data?.type === "deparsed" && hasDeparsedContent && event.data.file !== currentFilePath) {
+    if (event.data?.type === "content-updated" && hasDeparsedContent && event.data.file !== currentFilePath) {
       clearDeparsedContent("Another tab de-parsed content. Cleared for safety.");
     }
   };
