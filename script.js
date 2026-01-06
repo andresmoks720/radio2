@@ -68,6 +68,7 @@ let isChunkLoading = false;
 let autoLoadObserver = null;
 let autoLoadScheduled = false;
 let autoLoadFallbackBound = false;
+let pendingOutputSelection = "";
 const broadcast = "BroadcastChannel" in window ? new BroadcastChannel("app-channel") : null;
 
 document.documentElement.dataset.theme = "dark";
@@ -1068,8 +1069,7 @@ async function tryClipboardWrite(text) {
   }
 }
 
-function getSelectedOutputText() {
-  const selection = window.getSelection();
+function getSelectedOutputText(selection = window.getSelection()) {
   if (!selection || selection.isCollapsed) {
     return "";
   }
@@ -1080,8 +1080,13 @@ function getSelectedOutputText() {
   return selection.toString();
 }
 
+function captureOutputSelection() {
+  pendingOutputSelection = getSelectedOutputText();
+}
+
 async function copyDeparsedContent() {
-  const selectedText = getSelectedOutputText();
+  const selectedText = getSelectedOutputText() || pendingOutputSelection;
+  pendingOutputSelection = "";
   if (!selectedText) {
     copyStatus.textContent = "Select text in the preview to copy.";
     return;
@@ -1402,6 +1407,7 @@ function registerShortcuts(event) {
 loadFileBtn.addEventListener("click", handleFileLoad);
 loadRepoBtn.addEventListener("click", loadRepoFiles);
 themeToggle.addEventListener("click", toggleTheme);
+copyOutputBtn.addEventListener("pointerdown", captureOutputSelection);
 copyOutputBtn.addEventListener("click", copyDeparsedContent);
 loadMoreBtn.addEventListener("click", renderNextChunk);
 searchInput.addEventListener("input", handleSearch);
