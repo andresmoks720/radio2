@@ -43,6 +43,7 @@ const DEFAULT_INACTIVITY_MINUTES = 60;
 const DATA_EXTENSION = ".md.data";
 const MARKDOWN_CHUNK_TARGET = 2000;
 const AUTO_LOAD_ROOT_MARGIN = "240px";
+const AUTO_LOAD_THRESHOLD_PX = 240;
 const LIBRARIES = {
   marked: "vendor/marked.min.js",
   dompurify: "vendor/purify.min.js",
@@ -68,6 +69,8 @@ let chunkCursor = 0;
 let searchRunId = 0;
 let isChunkLoading = false;
 let autoLoadObserver = null;
+let autoLoadScheduled = false;
+let autoLoadFallbackBound = false;
 const broadcast = "BroadcastChannel" in window ? new BroadcastChannel("app-channel") : null;
 
 document.documentElement.dataset.theme = "dark";
@@ -361,8 +364,36 @@ async function renderNextChunk() {
   updateAutoLoadObserver();
 }
 
+function autoLoadNextChunkIfNeeded() {
+  if (!activePayload || !chunkDecoder || isChunkLoading || chunkCursor >= activePayload.chunks.length) {
+    return;
+  }
+  const scrollPosition = window.scrollY + window.innerHeight;
+  const maxScroll = document.documentElement.scrollHeight - AUTO_LOAD_THRESHOLD_PX;
+  if (scrollPosition >= maxScroll) {
+    renderNextChunk();
+  }
+}
+
+function scheduleAutoLoad() {
+  if (autoLoadScheduled) {
+    return;
+  }
+  autoLoadScheduled = true;
+  window.requestAnimationFrame(() => {
+    autoLoadScheduled = false;
+    autoLoadNextChunkIfNeeded();
+  });
+}
+
 function updateAutoLoadObserver() {
   if (!("IntersectionObserver" in window)) {
+    if (!autoLoadFallbackBound) {
+      window.addEventListener("scroll", scheduleAutoLoad, { passive: true });
+      window.addEventListener("resize", scheduleAutoLoad);
+      autoLoadFallbackBound = true;
+    }
+    scheduleAutoLoad();
     return;
   }
   if (!autoLoadObserver) {
@@ -1035,6 +1066,12 @@ async function createPlaintextStream(payload, accessPhrase, onProgress) {
       index += 1;
     },
   });
+}
+
+async function buildPlaintextBlob(payload, accessPhrase, onProgress) {
+  const stream = await createPlaintextStream(payload, accessPhrase, onProgress);
+  const response = new Response(stream);
+  return response.blob();
 }
 
 async function buildPlaintextText(payload, accessPhrase, onProgress) {
