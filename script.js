@@ -1,6 +1,6 @@
 const statusEl = document.getElementById("status");
 const outputEl = document.getElementById("output");
-const passwordInput = document.getElementById("password");
+const accessPhraseInput = document.getElementById("access-phrase");
 const sampleSelect = document.getElementById("sample-select");
 const loadSampleBtn = document.getElementById("load-sample");
 const fileInput = document.getElementById("file-input");
@@ -11,14 +11,15 @@ const repoBranchInput = document.getElementById("repo-branch");
 const loadRepoBtn = document.getElementById("load-repo");
 const repoFileList = document.getElementById("repo-file-list");
 const repoTokenInput = document.getElementById("repo-token");
+const inactivityTimeoutInput = document.getElementById("inactivity-timeout");
 const repoSpinner = document.getElementById("repo-spinner");
-const passphraseToggle = document.getElementById("toggle-passphrase");
+const accessToggle = document.getElementById("toggle-access");
 const themeToggle = document.getElementById("theme-toggle");
 const copyOutputBtn = document.getElementById("copy-output");
 const copyStatus = document.getElementById("copy-status");
 const loadMoreBtn = document.getElementById("load-more");
-const passphraseStrength = document.getElementById("passphrase-strength");
-const passphraseFeedback = document.getElementById("passphrase-feedback");
+const accessStrength = document.getElementById("access-strength");
+const accessFeedback = document.getElementById("access-feedback");
 const searchInput = document.getElementById("search-input");
 const categoryFilter = document.getElementById("category-filter");
 const exportTextBtn = document.getElementById("export-text");
@@ -28,41 +29,41 @@ const perfIndicator = document.getElementById("perf-indicator");
 const historyList = document.getElementById("history-list");
 const toast = document.getElementById("toast");
 const previewMeta = document.getElementById("preview-meta");
-const encryptTitleInput = document.getElementById("encrypt-title");
-const encryptContentInput = document.getElementById("encrypt-content");
-const encryptUploadBtn = document.getElementById("encrypt-upload");
-const encryptFileInput = document.getElementById("encrypt-file");
-const encryptMessageInput = document.getElementById("encrypt-message");
+const parseTitleInput = document.getElementById("parse-title");
+const parseContentInput = document.getElementById("parse-content");
+const parseUploadBtn = document.getElementById("parse-upload");
+const parseFileInput = document.getElementById("parse-file");
+const parseMessageInput = document.getElementById("parse-message");
 
 const MANIFEST_URL = "docs/manifest.json";
 const FORMAT_VERSION = 1;
 const PBKDF2_ITERATIONS = 100000;
-const INACTIVITY_LIMIT = 5 * 60 * 1000;
+const DEFAULT_INACTIVITY_MINUTES = 30;
 const TOKEN_BATCH_SIZE = 80;
 const LIBRARIES = {
-  marked: "https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js",
-  dompurify: "https://cdn.jsdelivr.net/npm/dompurify@3.1.5/dist/purify.min.js",
-  highlight: "https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/common.min.js",
-  highlightCss:
-    "https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github-dark.min.css",
+  marked: "vendor/marked.min.js",
+  dompurify: "vendor/purify.min.js",
+  highlight: "vendor/highlight.min.js",
+  highlightCss: "vendor/github-dark.css",
 };
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
-const decryptedCache = new Map();
-const encryptedCache = new Map();
-const passphraseStore = new Map();
+const deparsedCache = new Map();
+const parsedCache = new Map();
+const accessPhraseStore = new Map();
 const historyStore = new Map();
 
-let hasDecryptedContent = false;
+let hasDeparsedContent = false;
 let inactivityTimer = null;
+let inactivityLimitMs = DEFAULT_INACTIVITY_MINUTES * 60 * 1000;
 let currentMarkdown = "";
 let currentFilePath = "";
 let pendingTokens = [];
 let allRepoEntries = [];
 let bundleEntries = [];
 let librariesLoaded = false;
-const broadcast = "BroadcastChannel" in window ? new BroadcastChannel("encrypted-md") : null;
+const broadcast = "BroadcastChannel" in window ? new BroadcastChannel("parsed-md") : null;
 
 document.documentElement.dataset.theme = "dark";
 
@@ -94,13 +95,6 @@ function getAuthToken() {
   const inputToken = repoTokenInput.value.trim();
   if (inputToken) {
     return inputToken;
-  }
-  const match = window.location.hash.match(/token=([^&]+)/);
-  if (match) {
-    const token = decodeURIComponent(match[1]);
-    repoTokenInput.value = token;
-    window.history.replaceState(null, "", window.location.pathname + window.location.search);
-    return token;
   }
   return "";
 }
@@ -266,7 +260,7 @@ async function renderMarkdown(markdown) {
   copyStatus.textContent = "";
   outputEl.innerHTML = "";
   currentMarkdown = markdown;
-  hasDecryptedContent = Boolean(markdown.trim());
+  hasDeparsedContent = Boolean(markdown.trim());
   resetInactivityTimer();
 
   const start = performance.now();
@@ -303,10 +297,10 @@ function toBase64(bytes) {
   return btoa(chunks.join(""));
 }
 
-async function deriveKey(password, salt, usages) {
+async function deriveAccessKey(accessPhrase, seed, usages) {
   const keyMaterial = await crypto.subtle.importKey(
     "raw",
-    textEncoder.encode(password),
+    textEncoder.encode(accessPhrase),
     "PBKDF2",
     false,
     ["deriveKey"]
@@ -315,7 +309,7 @@ async function deriveKey(password, salt, usages) {
   return crypto.subtle.deriveKey(
     {
       name: "PBKDF2",
-      salt,
+      salt: seed,
       iterations: PBKDF2_ITERATIONS,
       hash: "SHA-256",
     },
@@ -326,58 +320,58 @@ async function deriveKey(password, salt, usages) {
   );
 }
 
-async function encryptMarkdown(markdown, password) {
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const key = await deriveKey(password, salt, ["encrypt"]);
-  const ciphertextBuffer = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv },
+async function parseMarkdown(markdown, accessPhrase) {
+  const seed = crypto.getRandomValues(new Uint8Array(16));
+  const offset = crypto.getRandomValues(new Uint8Array(12));
+  const key = await deriveAccessKey(accessPhrase, seed, ["encrypt"]);
+  const payloadBuffer = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv: offset },
     key,
     textEncoder.encode(markdown)
   );
 
   const payload = {
     version: FORMAT_VERSION,
-    salt: toBase64(salt),
-    iv: toBase64(iv),
-    ciphertext: toBase64(new Uint8Array(ciphertextBuffer)),
+    seed: toBase64(seed),
+    offset: toBase64(offset),
+    payload: toBase64(new Uint8Array(payloadBuffer)),
   };
 
-  salt.fill(0);
-  iv.fill(0);
+  seed.fill(0);
+  offset.fill(0);
   return payload;
 }
 
-async function decryptPayload(payload, password) {
+async function deparsePayload(payload, accessPhrase) {
   if (payload.version !== FORMAT_VERSION) {
     throw new Error(`Unsupported format version: ${payload.version}`);
   }
-  const salt = parseBase64(payload.salt);
-  const iv = parseBase64(payload.iv);
-  const ciphertext = parseBase64(payload.ciphertext);
+  const seed = parseBase64(payload.seed);
+  const offset = parseBase64(payload.offset);
+  const payloadBytes = parseBase64(payload.payload);
 
-  const key = await deriveKey(password, salt, ["decrypt"]);
-  const plaintextBuffer = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv },
+  const key = await deriveAccessKey(accessPhrase, seed, ["decrypt"]);
+  const resultBuffer = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: offset },
     key,
-    ciphertext
+    payloadBytes
   );
 
-  const plaintextBytes = new Uint8Array(plaintextBuffer);
-  const plaintext = textDecoder.decode(plaintextBytes);
-  salt.fill(0);
-  iv.fill(0);
-  ciphertext.fill(0);
-  plaintextBytes.fill(0);
-  return plaintext;
+  const resultBytes = new Uint8Array(resultBuffer);
+  const parsed = textDecoder.decode(resultBytes);
+  seed.fill(0);
+  offset.fill(0);
+  payloadBytes.fill(0);
+  resultBytes.fill(0);
+  return parsed;
+}
+
+function isParsedFile(name) {
+  return name.endsWith(".md.enc") || name.endsWith(".json");
 }
 
 function isMarkdownFile(name) {
-  return name.endsWith(".md") || name.endsWith(".md.enc");
-}
-
-function isEncryptedFile(name) {
-  return name.endsWith(".md.enc");
+  return isParsedFile(name);
 }
 
 function clearRepoFileList() {
@@ -389,7 +383,7 @@ function updatePreview(file) {
     previewMeta.textContent = "Select a file to preview.";
     return;
   }
-  const status = file.encrypted ? "Encrypted" : "Plain";
+  const status = file.parsed ? "Parsed" : "Plain";
   const size = file.size ? `${file.size} bytes` : "Unknown size";
   previewMeta.textContent = `${file.name} · ${status} · ${size}`;
 }
@@ -409,13 +403,7 @@ function createFileItem(file) {
 
   const statusIcon = document.createElement("span");
   statusIcon.className = "icon";
-  if (decryptedCache.has(file.path)) {
-    statusIcon.textContent = "✅";
-  } else if (file.encrypted) {
-    statusIcon.textContent = "🔒";
-  } else {
-    statusIcon.textContent = "📄";
-  }
+  statusIcon.textContent = "•";
 
   const actions = document.createElement("div");
   actions.className = "file-actions";
@@ -473,7 +461,7 @@ function filterEntries(entries, query) {
     if (entry.name.toLowerCase().includes(lower)) {
       return true;
     }
-    const cached = decryptedCache.get(entry.path);
+    const cached = deparsedCache.get(entry.path);
     if (cached && cached.toLowerCase().includes(lower)) {
       return true;
     }
@@ -507,7 +495,10 @@ function getFilteredEntries(entries) {
 
 async function fetchRepoEntries(owner, repo, branch, path = "docs") {
   const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}?ref=${branch}`;
-  const response = await fetchWithRetry(apiUrl, { headers: buildAuthHeaders() });
+  const response = await fetchWithRetry(apiUrl, {
+    headers: buildAuthHeaders(),
+    cache: "no-store",
+  });
   if (!response.ok) {
     throw new Error(await getGitHubError(response));
   }
@@ -525,7 +516,7 @@ async function fetchRepoEntries(owner, repo, branch, path = "docs") {
       files.push({
         name: entry.name,
         path: entry.path,
-        encrypted: isEncryptedFile(entry.name),
+        parsed: isParsedFile(entry.name),
         category: category || "Root",
         source: "repo",
         size: entry.size,
@@ -542,12 +533,13 @@ function rawGitHubUrl(owner, repo, branch, path) {
 async function fetchRawFile(owner, repo, branch, path, token) {
   if (token) {
     const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}?ref=${branch}`;
-    const response = await fetchWithRetry(apiUrl, {
-      headers: {
-        ...buildAuthHeaders(),
-        Accept: "application/vnd.github.raw",
-      },
-    });
+      const response = await fetchWithRetry(apiUrl, {
+        headers: {
+          ...buildAuthHeaders(),
+          Accept: "application/vnd.github.raw",
+        },
+        cache: "no-store",
+      });
     if (response.ok) {
       return response;
     }
@@ -557,6 +549,7 @@ async function fetchRawFile(owner, repo, branch, path, token) {
           Authorization: `token ${token}`,
           Accept: "application/vnd.github.raw",
         },
+        cache: "no-store",
       });
       if (!fallback.ok) {
         throw new Error(await getGitHubError(fallback));
@@ -565,7 +558,9 @@ async function fetchRawFile(owner, repo, branch, path, token) {
     }
     throw new Error(await getGitHubError(response));
   }
-  const response = await fetchWithRetry(rawGitHubUrl(owner, repo, branch, path));
+  const response = await fetchWithRetry(rawGitHubUrl(owner, repo, branch, path), {
+    cache: "no-store",
+  });
   if (!response.ok) {
     throw new Error(await getGitHubError(response));
   }
@@ -620,19 +615,23 @@ function renderHistory(entries) {
   });
 }
 
-function getPassphraseForFile(path, provided) {
+function getAccessPhraseForFile(path, provided) {
   if (provided) {
-    passphraseStore.set(path, provided);
+    accessPhraseStore.set(path, provided);
     return provided;
   }
-  return passphraseStore.get(path) || "";
+  return accessPhraseStore.get(path) || "";
 }
 
 async function handleRepoFileLoad(file) {
+  if (!file.parsed) {
+    setStatus("Plain markdown is not supported. Use parsed payloads only.", true);
+    return;
+  }
   const owner = repoOwnerInput.value.trim();
   const repo = repoNameInput.value.trim();
   const branch = repoBranchInput.value.trim() || "main";
-  const password = passwordInput.value.trim();
+  const accessPhrase = accessPhraseInput.value.trim();
   const token = getAuthToken();
 
   if (file.source !== "bundle" && (!owner || !repo)) {
@@ -644,17 +643,17 @@ async function handleRepoFileLoad(file) {
     return;
   }
 
-  if (file.encrypted && !getPassphraseForFile(file.path, password)) {
-    setStatus("Enter a passphrase before decrypting encrypted files.", true);
+  if (file.parsed && !getAccessPhraseForFile(file.path, accessPhrase)) {
+    setStatus("Enter an access phrase before de-parsing files.", true);
     return;
   }
 
-  if (decryptedCache.has(file.path)) {
+  if (deparsedCache.has(file.path)) {
     currentFilePath = file.path;
-    await renderMarkdown(decryptedCache.get(file.path));
-    setStatus("Loaded cached decrypted content.", false, true);
+    await renderMarkdown(deparsedCache.get(file.path));
+    setStatus("Loaded cached de-parsed content.", false, true);
     setOutputState("success");
-    updateHistory(file.path, decryptedCache.get(file.path));
+    updateHistory(file.path, deparsedCache.get(file.path));
     renderFileGroups(getFilteredEntries([...allRepoEntries, ...bundleEntries]));
     return;
   }
@@ -664,22 +663,22 @@ async function handleRepoFileLoad(file) {
   try {
     let markdown = "";
     if (file.source === "bundle") {
-      const payload = encryptedCache.get(file.path);
+      const payload = parsedCache.get(file.path);
       if (!payload) {
         throw new Error(`Missing bundle payload for ${file.path}.`);
       }
-      markdown = await decryptPayload(payload, getPassphraseForFile(file.path, password));
+      markdown = await deparsePayload(payload, getAccessPhraseForFile(file.path, accessPhrase));
     } else {
       const response = await fetchRawFile(owner, repo, branch, file.path, token);
-      if (file.encrypted) {
+      if (file.parsed) {
         const payload = await response.json();
-        encryptedCache.set(file.path, payload);
-        markdown = await decryptPayload(payload, getPassphraseForFile(file.path, password));
+        parsedCache.set(file.path, payload);
+        markdown = await deparsePayload(payload, getAccessPhraseForFile(file.path, accessPhrase));
       } else {
         markdown = await response.text();
       }
     }
-    decryptedCache.set(file.path, markdown);
+    deparsedCache.set(file.path, markdown);
     currentFilePath = file.path;
     await renderMarkdown(markdown);
     setStatus("File loaded successfully.", false, true);
@@ -688,7 +687,7 @@ async function handleRepoFileLoad(file) {
     renderFileGroups(getFilteredEntries([...allRepoEntries, ...bundleEntries]));
     updatePreview(file);
     if (broadcast) {
-      broadcast.postMessage({ type: "decrypted", file: file.path });
+      broadcast.postMessage({ type: "deparsed", file: file.path });
     }
     markdown = "";
   } catch (error) {
@@ -699,7 +698,7 @@ async function handleRepoFileLoad(file) {
 
 async function loadSamples() {
   try {
-    const response = await fetch(MANIFEST_URL);
+    const response = await fetch(MANIFEST_URL, { cache: "no-store" });
     if (!response.ok) {
       throw new Error("Unable to fetch sample manifest.");
     }
@@ -719,90 +718,90 @@ async function loadSamples() {
 
 async function handleSampleLoad() {
   const path = sampleSelect.value;
-  const password = passwordInput.value.trim();
+  const accessPhrase = accessPhraseInput.value.trim();
 
   if (!path) {
     setStatus("Please choose a sample file.", true);
     return;
   }
 
-  if (!password) {
-    setStatus("Enter a passphrase before decrypting.", true);
+  if (!accessPhrase) {
+    setStatus("Enter an access phrase before de-parsing.", true);
     return;
   }
 
-  setStatus("Decrypting sample...");
+  setStatus("De-parsing sample...");
   setOutputState("");
 
   try {
-    const response = await fetch(path);
+    const response = await fetch(path, { cache: "no-store" });
     const payload = await response.json();
-    encryptedCache.set(path, payload);
-    let markdown = await decryptPayload(payload, getPassphraseForFile(path, password));
-    decryptedCache.set(path, markdown);
+    parsedCache.set(path, payload);
+    let markdown = await deparsePayload(payload, getAccessPhraseForFile(path, accessPhrase));
+    deparsedCache.set(path, markdown);
     currentFilePath = path;
     await renderMarkdown(markdown);
-    setStatus("Sample decrypted successfully.", false, true);
+    setStatus("Sample de-parsed successfully.", false, true);
     setOutputState("success");
     updateHistory(path, markdown);
-    updatePreview({ name: path.split("/").pop(), path, encrypted: true, size: JSON.stringify(payload).length });
+    updatePreview({ name: path.split("/").pop(), path, parsed: true, size: JSON.stringify(payload).length });
     if (broadcast) {
-      broadcast.postMessage({ type: "decrypted", file: path });
+      broadcast.postMessage({ type: "deparsed", file: path });
     }
     markdown = "";
   } catch (error) {
-    setStatus(`Failed to decrypt sample: ${error.message}`, true);
+    setStatus(`Failed to de-parse sample: ${error.message}`, true);
     setOutputState("error");
   }
 }
 
 async function handleFileLoad() {
   const file = fileInput.files[0];
-  const password = passwordInput.value.trim();
+  const accessPhrase = accessPhraseInput.value.trim();
 
   if (!file) {
-    setStatus("Choose a local encrypted file first.", true);
+    setStatus("Choose a local parsed file first.", true);
     return;
   }
 
-  if (!password) {
-    setStatus("Enter a passphrase before decrypting.", true);
+  if (!accessPhrase) {
+    setStatus("Enter an access phrase before de-parsing.", true);
     return;
   }
 
-  setStatus("Decrypting local file...");
+  setStatus("De-parsing local file...");
   setOutputState("");
 
   try {
     const contents = await file.text();
     const payload = JSON.parse(contents);
-    encryptedCache.set(file.name, payload);
-    let markdown = await decryptPayload(payload, getPassphraseForFile(file.name, password));
-    decryptedCache.set(file.name, markdown);
+    parsedCache.set(file.name, payload);
+    let markdown = await deparsePayload(payload, getAccessPhraseForFile(file.name, accessPhrase));
+    deparsedCache.set(file.name, markdown);
     currentFilePath = file.name;
     await renderMarkdown(markdown);
-    setStatus("Local file decrypted successfully.", false, true);
+    setStatus("Local file de-parsed successfully.", false, true);
     setOutputState("success");
     updateHistory(file.name, markdown);
-    updatePreview({ name: file.name, path: file.name, encrypted: true, size: file.size });
+    updatePreview({ name: file.name, path: file.name, parsed: true, size: file.size });
     if (broadcast) {
-      broadcast.postMessage({ type: "decrypted", file: file.name });
+      broadcast.postMessage({ type: "deparsed", file: file.name });
     }
     markdown = "";
   } catch (error) {
-    setStatus(`Failed to decrypt file: ${error.message}`, true);
+    setStatus(`Failed to de-parse file: ${error.message}`, true);
     setOutputState("error");
   }
 }
 
-function clearDecryptedContent(reason) {
+function clearDeparsedContent(reason) {
   outputEl.innerHTML = "";
   currentMarkdown = "";
   currentFilePath = "";
-  hasDecryptedContent = false;
-  decryptedCache.clear();
-  encryptedCache.clear();
-  passphraseStore.clear();
+  hasDeparsedContent = false;
+  deparsedCache.clear();
+  parsedCache.clear();
+  accessPhraseStore.clear();
   setOutputState("");
   copyStatus.textContent = "";
   loadMoreBtn.hidden = true;
@@ -821,34 +820,45 @@ function resetInactivityTimer() {
     clearTimeout(inactivityTimer);
   }
   inactivityTimer = setTimeout(() => {
-    if (hasDecryptedContent) {
-      clearDecryptedContent("Decrypted content cleared after inactivity.");
+    if (hasDeparsedContent) {
+      clearDeparsedContent("De-parsed content cleared after inactivity.");
     }
-  }, INACTIVITY_LIMIT);
+  }, inactivityLimitMs);
 }
 
-function evaluatePassphraseStrength(passphrase) {
+function updateInactivityTimeout() {
+  const minutes = Number.parseFloat(inactivityTimeoutInput.value);
+  if (!Number.isFinite(minutes) || minutes <= 0) {
+    inactivityLimitMs = DEFAULT_INACTIVITY_MINUTES * 60 * 1000;
+    inactivityTimeoutInput.value = String(DEFAULT_INACTIVITY_MINUTES);
+  } else {
+    inactivityLimitMs = Math.round(minutes * 60 * 1000);
+  }
+  resetInactivityTimer();
+}
+
+function evaluateAccessStrength(accessPhrase) {
   let score = 0;
-  if (passphrase.length >= 8) score += 1;
-  if (/[A-Z]/.test(passphrase) && /[a-z]/.test(passphrase)) score += 1;
-  if (/\d/.test(passphrase)) score += 1;
-  if (/[^A-Za-z0-9]/.test(passphrase)) score += 1;
+  if (accessPhrase.length >= 8) score += 1;
+  if (/[A-Z]/.test(accessPhrase) && /[a-z]/.test(accessPhrase)) score += 1;
+  if (/\d/.test(accessPhrase)) score += 1;
+  if (/[^A-Za-z0-9]/.test(accessPhrase)) score += 1;
   return score;
 }
 
-function updatePassphraseStrength() {
-  const passphrase = passwordInput.value;
-  const score = evaluatePassphraseStrength(passphrase);
-  passphraseStrength.value = score;
-  const feedback = ["Enter a passphrase", "Weak", "Fair", "Good", "Strong"];
-  passphraseFeedback.textContent = feedback[score] || "Strong";
+function updateAccessStrength() {
+  const accessPhrase = accessPhraseInput.value;
+  const score = evaluateAccessStrength(accessPhrase);
+  accessStrength.value = score;
+  const feedback = ["Enter an access phrase", "Weak", "Fair", "Good", "Strong"];
+  accessFeedback.textContent = feedback[score] || "Strong";
 }
 
-function togglePassphraseVisibility() {
-  const isHidden = passwordInput.type === "password";
-  passwordInput.type = isHidden ? "text" : "password";
-  passphraseToggle.textContent = isHidden ? "Hide" : "Show";
-  passphraseToggle.setAttribute("aria-pressed", String(isHidden));
+function toggleAccessVisibility() {
+  const isHidden = accessPhraseInput.type === "password";
+  accessPhraseInput.type = isHidden ? "text" : "password";
+  accessToggle.textContent = isHidden ? "Hide" : "Show";
+  accessToggle.setAttribute("aria-pressed", String(isHidden));
 }
 
 function toggleTheme() {
@@ -859,14 +869,14 @@ function toggleTheme() {
   themeToggle.setAttribute("aria-pressed", String(!isLight));
 }
 
-async function copyDecryptedContent() {
+async function copyDeparsedContent() {
   if (!currentMarkdown.trim()) {
     copyStatus.textContent = "Nothing to copy yet.";
     return;
   }
   try {
     await navigator.clipboard.writeText(currentMarkdown);
-    copyStatus.textContent = "Decrypted content copied.";
+    copyStatus.textContent = "De-parsed content copied.";
     showToast("Copied to clipboard");
   } catch (error) {
     copyStatus.textContent = "Copy failed. Try selecting text manually.";
@@ -881,14 +891,14 @@ function exportText() {
   const blob = new Blob([currentMarkdown], { type: "text/plain" });
   const link = document.createElement("a");
   link.href = URL.createObjectURL(blob);
-  link.download = `${currentFilePath || "decrypted"}.txt`;
+  link.download = `${currentFilePath || "deparsed"}.txt`;
   link.click();
   URL.revokeObjectURL(link.href);
 }
 
 function exportBundle() {
   const files = [];
-  encryptedCache.forEach((payload, path) => {
+  parsedCache.forEach((payload, path) => {
     files.push({ path, payload });
   });
   const bundle = {
@@ -899,7 +909,7 @@ function exportBundle() {
   const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
   const link = document.createElement("a");
   link.href = URL.createObjectURL(blob);
-  link.download = "encrypted-bundle.json";
+  link.download = "parsed-bundle.json";
   link.click();
   URL.revokeObjectURL(link.href);
 }
@@ -918,13 +928,13 @@ async function importBundle() {
     bundleEntries = bundle.files.map((entry) => ({
       name: entry.path.split("/").pop(),
       path: entry.path,
-      encrypted: true,
+      parsed: true,
       category: "Imported Bundle",
       source: "bundle",
       size: JSON.stringify(entry.payload).length,
     }));
     bundle.files.forEach((entry) => {
-      encryptedCache.set(entry.path, entry.payload);
+      parsedCache.set(entry.path, entry.payload);
     });
     const combined = [...allRepoEntries, ...bundleEntries];
     updateCategoryOptions(combined);
@@ -935,14 +945,14 @@ async function importBundle() {
   }
 }
 
-async function encryptAndUpload() {
+async function parseAndUpload() {
   const owner = repoOwnerInput.value.trim();
   const repo = repoNameInput.value.trim();
   const branch = repoBranchInput.value.trim() || "main";
-  const targetPath = encryptTitleInput.value.trim();
-  const password = passwordInput.value.trim();
+  const targetPath = parseTitleInput.value.trim();
+  const accessPhrase = accessPhraseInput.value.trim();
   const token = getAuthToken();
-  const commitMessage = encryptMessageInput.value.trim();
+  const commitMessage = parseMessageInput.value.trim();
 
   if (!owner || !repo || !targetPath) {
     setStatus("Provide owner, repo, and target path.", true);
@@ -952,28 +962,28 @@ async function encryptAndUpload() {
     setStatus("Upload path must end with .md.enc", true);
     return;
   }
-  if (!password) {
-    setStatus("Provide passphrase and markdown content.", true);
+  if (!accessPhrase) {
+    setStatus("Provide an access phrase and markdown content.", true);
     return;
   }
   if (!token) {
-    setStatus("GitHub token required to upload encrypted files.", true);
+    setStatus("GitHub token required to upload parsed files.", true);
     return;
   }
 
-  setStatus("Encrypting and uploading to GitHub...");
+  setStatus("Parsing and uploading to GitHub...");
   try {
-    let markdown = encryptContentInput.value.trim();
-    if (encryptFileInput.files.length > 0) {
-      markdown = await encryptFileInput.files[0].text();
+    let markdown = parseContentInput.value.trim();
+    if (parseFileInput.files.length > 0) {
+      markdown = await parseFileInput.files[0].text();
     }
     if (!markdown) {
-      setStatus("Provide passphrase and markdown content.", true);
+      setStatus("Provide an access phrase and markdown content.", true);
       return;
     }
-    const payload = await encryptMarkdown(markdown, password);
+    const payload = await parseMarkdown(markdown, accessPhrase);
     const body = {
-      message: commitMessage || `Add encrypted file ${targetPath}`,
+      message: commitMessage || `Add parsed file ${targetPath}`,
       content: btoa(JSON.stringify(payload)),
       branch,
     };
@@ -987,16 +997,17 @@ async function encryptAndUpload() {
           ...buildAuthHeaders(),
         },
         body: JSON.stringify(body),
+        cache: "no-store",
       }
     );
     if (!response.ok) {
       throw new Error(await getGitHubError(response));
     }
-    setStatus("Encrypted file uploaded.", false, true);
-    encryptContentInput.value = "";
-    encryptTitleInput.value = "";
-    encryptMessageInput.value = "";
-    encryptFileInput.value = "";
+    setStatus("Parsed file uploaded.", false, true);
+    parseContentInput.value = "";
+    parseTitleInput.value = "";
+    parseMessageInput.value = "";
+    parseFileInput.value = "";
   } catch (error) {
     setStatus(`Upload failed: ${error.message}`, true);
   }
@@ -1005,12 +1016,6 @@ async function encryptAndUpload() {
 function handleSearch() {
   const combined = [...allRepoEntries, ...bundleEntries];
   renderFileGroups(getFilteredEntries(combined));
-}
-
-function setupServiceWorker() {
-  if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("sw.js");
-  }
 }
 
 function registerShortcuts(event) {
@@ -1022,7 +1027,7 @@ function registerShortcuts(event) {
     event.preventDefault();
   }
   if (event.key === "p") {
-    togglePassphraseVisibility();
+    toggleAccessVisibility();
     event.preventDefault();
   }
   if (event.key === "t") {
@@ -1030,7 +1035,7 @@ function registerShortcuts(event) {
     event.preventDefault();
   }
   if (event.key === "c") {
-    copyDecryptedContent();
+    copyDeparsedContent();
     event.preventDefault();
   }
   if (event.key === "l") {
@@ -1046,17 +1051,18 @@ function registerShortcuts(event) {
 loadSampleBtn.addEventListener("click", handleSampleLoad);
 loadFileBtn.addEventListener("click", handleFileLoad);
 loadRepoBtn.addEventListener("click", loadRepoFiles);
-passphraseToggle.addEventListener("click", togglePassphraseVisibility);
+accessToggle.addEventListener("click", toggleAccessVisibility);
 themeToggle.addEventListener("click", toggleTheme);
-copyOutputBtn.addEventListener("click", copyDecryptedContent);
+copyOutputBtn.addEventListener("click", copyDeparsedContent);
 loadMoreBtn.addEventListener("click", renderTokensBatch);
-passwordInput.addEventListener("input", updatePassphraseStrength);
+accessPhraseInput.addEventListener("input", updateAccessStrength);
 searchInput.addEventListener("input", handleSearch);
 categoryFilter.addEventListener("change", handleSearch);
+inactivityTimeoutInput.addEventListener("input", updateInactivityTimeout);
 exportTextBtn.addEventListener("click", exportText);
 exportBundleBtn.addEventListener("click", exportBundle);
 importBundleInput.addEventListener("change", importBundle);
-encryptUploadBtn.addEventListener("click", encryptAndUpload);
+parseUploadBtn.addEventListener("click", parseAndUpload);
 outputEl.addEventListener("contextmenu", (event) => event.preventDefault());
 
 document.addEventListener("keydown", registerShortcuts);
@@ -1066,7 +1072,7 @@ document.addEventListener("keydown", registerShortcuts);
 });
 
 window.addEventListener("beforeunload", (event) => {
-  if (hasDecryptedContent) {
+  if (hasDeparsedContent) {
     event.preventDefault();
     event.returnValue = "";
   }
@@ -1074,13 +1080,12 @@ window.addEventListener("beforeunload", (event) => {
 
 if (broadcast) {
   broadcast.onmessage = (event) => {
-    if (event.data?.type === "decrypted" && hasDecryptedContent && event.data.file !== currentFilePath) {
-      clearDecryptedContent("Another tab decrypted content. Cleared for safety.");
+    if (event.data?.type === "deparsed" && hasDeparsedContent && event.data.file !== currentFilePath) {
+      clearDeparsedContent("Another tab de-parsed content. Cleared for safety.");
     }
   };
 }
 
-updatePassphraseStrength();
-resetInactivityTimer();
-setupServiceWorker();
+updateAccessStrength();
+updateInactivityTimeout();
 loadSamples();

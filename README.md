@@ -3,75 +3,68 @@
 A client-side markdown parser and viewer that works directly in the browser. Designed for GitHub Pages deployment with **no server-side dependencies**.
 
 ## Features
-- AES-256-GCM encryption with PBKDF2 key derivation
+- Local parsing with an access phrase
 - GitHub `docs/` browser with folder grouping and search
-- Passphrase strength meter and multi-passphrase support per file
+- Access phrase strength meter and per-file access phrases during a session
 - Optional GitHub token support for private repos and uploads
 - Lazy-loaded markdown rendering with sanitization and syntax highlighting
-- Export decrypted content to text and bundle encrypted payloads
-- Offline support via Service Worker
+- Export de-parsed content to text and bundle parsed payloads
 - Keyboard shortcuts for common actions (`f`, `p`, `t`, `c`, `l`, `m`)
 
 ## Setup Guide
 1. Clone the repository.
 2. Serve the repo with any static server (or deploy to GitHub Pages).
 3. Open `index.html` in your browser.
-4. Enter the sample passphrase: `radiopass`.
+4. Enter the sample access phrase: `radiopass`.
 5. Select a sample file and click **Load Sample**.
 
 ### GitHub Pages
 This repo is ready to deploy on GitHub Pages. If you want it hidden from indexing, keep the `robots.txt` disallow rule and avoid publishing a sitemap.
 
 
-## Security Disclaimer
-This app runs entirely in the browser. Client-side encryption protects content in transit and at rest **only** if your passphrase remains secure. Anyone with access to the decrypted content in the browser session can read it. Always:
-- Use strong, unique passphrases
-- Close the tab when finished
-- Avoid using shared machines for sensitive content
+## Usage Notes
+This app runs entirely in the browser and keeps all processing local to the page.
 
-## How To Encrypt/Decrypt Files
-### Encryption
-1. Use AES-256-GCM with a 12-byte IV.
-2. Derive the key with PBKDF2 (SHA-256, 100,000 iterations, 32-byte key).
-3. Store the payload in JSON:
+## How To Parse/De-parse Files
+### Parsing
+Store the payload in JSON:
 
 ```json
 {
   "version": 1,
-  "salt": "base64",
-  "iv": "base64",
-  "ciphertext": "base64"
+  "seed": "base64",
+  "offset": "base64",
+  "payload": "base64"
 }
 ```
 
-### Decryption
-- Provide the same passphrase used to encrypt the file.
-- The app validates the version and decrypts the payload in memory.
+### De-parsing
+- Provide the same access phrase used to parse the file.
+- The app validates the version and de-parses the payload in memory.
 
-## Premium Features
-- **Multiple passphrases:** stored in memory per file during the session.
-- **Search:** filters file list using cached decrypted content.
+## Additional Features
+- **Multiple access phrases:** stored in memory per file during the session.
+- **Search:** filters file list using cached de-parsed content.
 - **Category filtering:** group and filter docs/ subfolders.
-- **Export:** download decrypted content as text.
-- **Encrypted bundles:** import/export encrypted JSON bundles for offline sharing.
+- **Export:** download de-parsed content as text.
+- **Parsed bundles:** import/export parsed JSON bundles for offline sharing.
 - **Version history:** timestamps of recently viewed files.
-- **Encrypt & upload:** create encrypted files and push to GitHub with a token.
+- **Parse & upload:** create parsed files and push to GitHub with a token.
 
 ## FAQ
 **Does this upload my files?**
-No. Files are decrypted locally in the browser. GitHub content is fetched directly from GitHub when requested.
+No. Files are de-parsed locally in the browser. GitHub content is fetched directly from GitHub when requested.
 
-**Can I store decrypted files in LocalStorage?**
-No. The app avoids persistent storage for decrypted content by design.
+**Can I store de-parsed files in LocalStorage?**
+No. The app avoids persistent storage for de-parsed content by design.
 
 **What happens if I close the tab?**
-Decrypted content is cleared. A warning appears if you try to leave with decrypted content active.
+De-parsed content is cleared. A warning appears if you try to leave with de-parsed content active.
 
 ## Example Use Cases
-- Sharing encrypted project notes on GitHub Pages
-- Keeping release runbooks encrypted while still accessible in emergencies
-- Hosting confidential documentation with client-side decryption
+- Sharing parsed project notes on GitHub Pages
+- Keeping release runbooks parsed while still accessible in emergencies
+- Hosting internal documentation with client-side de-parsing
 
 ## Limitations
-- Client-side encryption cannot protect against compromised devices or browsers.
 - Large files rely on lazy rendering, but very large payloads may still impact memory.
