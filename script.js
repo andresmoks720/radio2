@@ -42,6 +42,7 @@ const FORMAT_VERSION = 2;
 const DEFAULT_INACTIVITY_MINUTES = 60;
 const DATA_EXTENSION = ".md.data";
 const MARKDOWN_CHUNK_TARGET = 2000;
+const AUTO_LOAD_THRESHOLD_PX = 240;
 const LIBRARIES = {
   marked: "vendor/marked.min.js",
   dompurify: "vendor/purify.min.js",
@@ -65,6 +66,8 @@ let activePayload = null;
 let chunkDecoder = null;
 let chunkCursor = 0;
 let searchRunId = 0;
+let isChunkLoading = false;
+let autoLoadScheduled = false;
 const broadcast = "BroadcastChannel" in window ? new BroadcastChannel("app-channel") : null;
 
 document.documentElement.dataset.theme = "dark";
@@ -322,7 +325,7 @@ async function appendMarkdownChunk(markdown) {
 }
 
 async function renderNextChunk() {
-  if (!activePayload || !chunkDecoder || chunkCursor >= activePayload.chunks.length) {
+  if (!activePayload || !chunkDecoder || chunkCursor >= activePayload.chunks.length || isChunkLoading) {
     loadMoreBtn.hidden = true;
     return;
   }
@@ -330,6 +333,7 @@ async function renderNextChunk() {
   resetInactivityTimer();
   const chunkEntry = activePayload.chunks[chunkCursor];
   chunkCursor += 1;
+  isChunkLoading = true;
 
   const start = performance.now();
   let scrambled = null;
@@ -344,14 +348,38 @@ async function renderNextChunk() {
   } finally {
     scrubChunk(scrambled);
     markdown = "";
+    isChunkLoading = false;
   }
 
   const duration = Math.round(performance.now() - start);
   perfIndicator.textContent = `Render: ${duration}ms`;
   loadMoreBtn.hidden = chunkCursor >= activePayload.chunks.length;
   if (!loadMoreBtn.hidden) {
-    setStatus("Use “Load more” to render the next chunk.");
+    setStatus("Scroll to load more.");
   }
+  autoLoadNextChunkIfNeeded();
+}
+
+function autoLoadNextChunkIfNeeded() {
+  if (!activePayload || !chunkDecoder || isChunkLoading || chunkCursor >= activePayload.chunks.length) {
+    return;
+  }
+  const scrollPosition = window.scrollY + window.innerHeight;
+  const maxScroll = document.documentElement.scrollHeight - AUTO_LOAD_THRESHOLD_PX;
+  if (scrollPosition >= maxScroll) {
+    renderNextChunk();
+  }
+}
+
+function scheduleAutoLoad() {
+  if (autoLoadScheduled) {
+    return;
+  }
+  autoLoadScheduled = true;
+  window.requestAnimationFrame(() => {
+    autoLoadScheduled = false;
+    autoLoadNextChunkIfNeeded();
+  });
 }
 
 async function renderMarkdown(payload, accessPhrase) {
@@ -1013,6 +1041,45 @@ async function buildPlaintextBlob(payload, accessPhrase, onProgress) {
   return response.blob();
 }
 
+async function buildPlaintextText(payload, accessPhrase, onProgress) {
+  const stream = await createPlaintextStream(payload, accessPhrase, onProgress);
+  const response = new Response(stream);
+  return response.text();
+}
+
+async function fallbackExecCommandCopy(text) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("readonly", "");
+  ta.style.position = "fixed";
+  ta.style.top = "-1000px";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  ta.setSelectionRange(0, ta.value.length);
+
+  let ok = false;
+  try {
+    ok = document.execCommand("copy");
+  } catch (error) {
+    ok = false;
+  } finally {
+    ta.value = "";
+    ta.remove();
+  }
+  return ok;
+}
+
+function isClipboardContextAllowed() {
+  const { protocol, hostname } = window.location;
+  return (
+    protocol === "https:" ||
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "[::1]"
+  );
+}
+
 async function copyDeparsedContent() {
   if (!activePayload) {
     copyStatus.textContent = "Nothing to copy yet.";
@@ -1023,14 +1090,38 @@ async function copyDeparsedContent() {
     copyStatus.textContent = "Enter a session code before copying.";
     return;
   }
-  try {
-    copyStatus.textContent = "Copying content...";
+  copyStatus.textContent = "Copying content...";
+  const writeWithAsyncClipboard = async () => {
     const blob = await buildPlaintextBlob(activePayload, accessPhrase);
     await navigator.clipboard.write([new ClipboardItem({ "text/plain": blob })]);
-    copyStatus.textContent = "Processed content copied.";
+  };
+  try {
+    if (!navigator.clipboard?.write) {
+      throw new Error("ClipboardWriteUnavailable");
+    }
+    if (!isClipboardContextAllowed()) {
+      throw new Error("ClipboardContextBlocked");
+    }
+    await writeWithAsyncClipboard();
+    copyStatus.textContent = "Copied to clipboard.";
     showToast("Copied to clipboard");
   } catch (error) {
-    copyStatus.textContent = "Copy failed. Try selecting text manually.";
+    const name = error?.name || error?.message || "Error";
+    let text = "";
+    try {
+      text = await buildPlaintextText(activePayload, accessPhrase);
+      const ok = await fallbackExecCommandCopy(text);
+      if (ok) {
+        copyStatus.textContent = `Copied (fallback after ${name}).`;
+        showToast("Copied to clipboard");
+      } else {
+        copyStatus.textContent = `Copy blocked (${name}). Try: use the Copy button, keep the tab focused, allow clipboard in site settings, avoid embedded frames or guest mode.`;
+      }
+    } catch (fallbackError) {
+      copyStatus.textContent = `Copy blocked (${name}). Try: use the Copy button, keep the tab focused, allow clipboard in site settings, avoid embedded frames or guest mode.`;
+    } finally {
+      text = "";
+    }
   }
 }
 
@@ -1340,6 +1431,8 @@ parseSaveBtn.addEventListener("click", parseAndSave);
 outputEl.addEventListener("contextmenu", (event) => event.preventDefault());
 
 document.addEventListener("keydown", registerShortcuts);
+window.addEventListener("scroll", scheduleAutoLoad, { passive: true });
+window.addEventListener("resize", scheduleAutoLoad);
 
 ["click", "keydown", "mousemove", "scroll", "touchstart"].forEach((eventName) => {
   document.addEventListener(eventName, resetInactivityTimer, { passive: true });
