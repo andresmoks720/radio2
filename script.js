@@ -1,39 +1,24 @@
-const statusEl = document.getElementById("status");
-const outputEl = document.getElementById("output");
-const accessPhraseInput = document.getElementById("access-phrase");
-const fileInput = document.getElementById("file-input");
-const loadFileBtn = document.getElementById("load-file");
-const repoOwnerInput = document.getElementById("repo-owner");
-const repoNameInput = document.getElementById("repo-name");
-const repoBranchInput = document.getElementById("repo-branch");
-const loadRepoBtn = document.getElementById("load-repo");
-const repoFileList = document.getElementById("repo-file-list");
-const repoTokenInput = document.getElementById("repo-token");
-const repoPathInput = document.getElementById("repo-path");
-const inactivityTimeoutInput = document.getElementById("inactivity-timeout");
-const repoSpinner = document.getElementById("repo-spinner");
-const themeToggle = document.getElementById("theme-toggle");
-const copyOutputBtn = document.getElementById("copy-output");
-const copyStatus = document.getElementById("copy-status");
-const loadMoreBtn = document.getElementById("load-more");
-const searchInput = document.getElementById("search-input");
-const fileFilterInput = document.getElementById("file-filter");
-const categoryFilter = document.getElementById("category-filter");
-const exportTextBtn = document.getElementById("export-text");
-const exportBundleBtn = document.getElementById("export-bundle");
-const importBundleInput = document.getElementById("import-bundle");
-const perfIndicator = document.getElementById("perf-indicator");
-const historyList = document.getElementById("history-list");
-const toast = document.getElementById("toast");
-const previewMeta = document.getElementById("preview-meta");
-const searchResultsList = document.getElementById("search-results");
-const searchSummary = document.getElementById("search-summary");
-const parseTitleInput = document.getElementById("parse-title");
-const parseContentInput = document.getElementById("parse-content");
-const parseUploadBtn = document.getElementById("parse-upload");
-const parseFileInput = document.getElementById("parse-file");
-const parseMessageInput = document.getElementById("parse-message");
-const parseSaveBtn = document.getElementById("parse-save");
+import { createUi } from "./lib/ui.js";
+import { createSessionState } from "./lib/state.js";
+import {
+  buildAuthHeaders,
+  fetchGitHubWithRetry,
+  fetchRawFile,
+  fetchRepoEntries,
+  getGitHubError,
+} from "./lib/data.js";
+import { searchPayload } from "./lib/search.js";
+import {
+  buildSearchPreview,
+  ensurePayloadExtension,
+  filterByCategory,
+  filterEntries,
+  normalizeRepoPath,
+  splitMarkdownIntoChunks,
+} from "./lib/helpers.js";
+
+const ui = createUi();
+const { elements } = ui;
 
 const FORMAT_VERSION = 2;
 const DEFAULT_INACTIVITY_MINUTES = 60;
@@ -41,30 +26,77 @@ const DATA_EXTENSION = ".md.data";
 const MARKDOWN_CHUNK_TARGET = 2000;
 const AUTO_LOAD_ROOT_MARGIN = "240px";
 const AUTO_LOAD_THRESHOLD_PX = 240;
+const SHOW_PERF_METRICS = false;
 const LIBRARIES = {
   marked: "vendor/marked.min.js",
   dompurify: "vendor/purify.min.js",
   highlight: "vendor/highlight.min.js",
   highlightCss: "vendor/github-dark.css",
 };
+const STATUS_MESSAGES = {
+  accessRequired: { text: "Enter a session code to continue.", tone: "error" },
+  accessRequiredSearch: { text: "Enter a session code to search.", tone: "error" },
+  accessRequiredOpen: { text: "Enter a session code before opening.", tone: "error" },
+  accessRequiredExport: { text: "Enter a session code before exporting.", tone: "error" },
+  accessRequiredParse: { text: "Provide a session code and markdown content.", tone: "error" },
+  accessRequiredResult: { text: "Enter a session code before opening a result.", tone: "error" },
+  repoInfoRequired: { text: "Enter a GitHub owner and repository name.", tone: "error" },
+  repoListOffline: { text: "Offline mode: unable to fetch GitHub repo list.", tone: "error" },
+  repoListLoading: { text: ({ path }) => `Loading ${path} listing from GitHub...`, tone: "info" },
+  repoListLoaded: {
+    text: ({ count, path }) => `Loaded ${count} parsed payload files (.md.data) from ${path}.`,
+    tone: "success",
+  },
+  repoListFailed: { text: ({ detail }) => `Repo list failed.${detail ? ` ${detail}` : ""}`, tone: "error" },
+  fileLoadStarting: { text: "Loading file...", tone: "info" },
+  fileLoadFailed: { text: ({ detail }) => `File load failed.${detail ? ` ${detail}` : ""}`, tone: "error" },
+  fileLoadSuccess: { text: "File loaded successfully.", tone: "success" },
+  fileLocalLoadStarting: { text: "Loading local file...", tone: "info" },
+  fileLocalLoadSuccess: { text: "Local file processed successfully.", tone: "success" },
+  fileMissingLocal: { text: "Choose a local parsed payload file first.", tone: "error" },
+  fileParsedOnly: { text: "Only parsed markdown payloads (.md.data) are supported.", tone: "error" },
+  fileMissingBundleData: { text: ({ path }) => `Missing export data for ${path}.`, tone: "error" },
+  fileLoadOffline: { text: "Offline mode: unable to fetch file from GitHub.", tone: "error" },
+  loadMoreHint: { text: "More content will load near the end of the page.", tone: "info" },
+  renderFailed: { text: ({ detail }) => `Render failed.${detail ? ` ${detail}` : ""}`, tone: "error" },
+  chunkRenderFailed: { text: ({ detail }) => `Failed to render chunk.${detail ? ` ${detail}` : ""}`, tone: "error" },
+  searchLoadRequired: { text: "Load a file to search.", tone: "error" },
+  searchScanning: { text: "Scanning...", tone: "info" },
+  searchFailed: { text: ({ detail }) => `Search failed.${detail ? ` ${detail}` : ""}`, tone: "error" },
+  searchResultLoading: { text: "Loading search result chunk...", tone: "info" },
+  searchResultLoaded: { text: "Search result loaded.", tone: "success" },
+  exportNothing: { text: "Nothing to export yet.", tone: "error" },
+  exportPreparing: { text: "Preparing export...", tone: "info" },
+  exportReady: { text: "Export ready.", tone: "success" },
+  exportFailed: { text: ({ detail }) => `Export failed.${detail ? ` ${detail}` : ""}`, tone: "error" },
+  bundleImportSuccess: { text: "Bundle imported.", tone: "success" },
+  bundleImportFailed: { text: ({ detail }) => `Bundle import failed.${detail ? ` ${detail}` : ""}`, tone: "error" },
+  parseUploadStart: { text: "Parsing and uploading to GitHub...", tone: "info" },
+  parseUploadSuccess: { text: "Uploaded file.", tone: "success" },
+  parseUploadFailed: { text: ({ detail }) => `Upload failed.${detail ? ` ${detail}` : ""}`, tone: "error" },
+  parseLocalStart: { text: "Parsing for local save...", tone: "info" },
+  parseLocalReady: { text: "Local file ready.", tone: "success" },
+  parseLocalFailed: { text: ({ detail }) => `Local save failed.${detail ? ` ${detail}` : ""}`, tone: "error" },
+  repoUploadMissingInfo: { text: "Provide owner, repo, and target path.", tone: "error" },
+  repoUploadNeedsToken: { text: "GitHub token required to upload payload files.", tone: "error" },
+  clearedIdle: { text: "Processed content cleared after inactivity.", tone: "info" },
+  clearedRemote: { text: "Another tab processed content. Cleared for safety.", tone: "info" },
+};
 
-const parsedCache = new Map();
+const livePayloads = new Map();
+const bundlePayloads = new Map();
 const historyStore = new Map();
 const payloadCodec = window.payloadCodec || {};
+const sessionState = createSessionState();
 
-let hasDeparsedContent = false;
 let inactivityTimer = null;
 let inactivityLimitMs = DEFAULT_INACTIVITY_MINUTES * 60 * 1000;
-let currentFilePath = "";
 const chunkTextDecoder = new TextDecoder();
 let allRepoEntries = [];
 let bundleEntries = [];
 let librariesLoaded = false;
-let activePayload = null;
-let chunkDecoder = null;
-let chunkCursor = 0;
 let searchRunId = 0;
-let isChunkLoading = false;
+let chunkLock = false;
 let autoLoadObserver = null;
 let autoLoadScheduled = false;
 let autoLoadFallbackBound = false;
@@ -73,64 +105,51 @@ const broadcast = "BroadcastChannel" in window ? new BroadcastChannel("app-chann
 
 document.documentElement.dataset.theme = "dark";
 
-function setStatus(message, isError = false, isSuccess = false) {
-  statusEl.textContent = message;
-  statusEl.classList.toggle("error", isError);
-  statusEl.classList.toggle("success", isSuccess);
-}
-
-function setOutputState(state) {
-  outputEl.classList.remove("success", "error");
-  if (state) {
-    outputEl.classList.add(state);
-  }
-}
-
-function showToast(message) {
-  toast.textContent = message;
-  toast.classList.add("show");
-  window.setTimeout(() => toast.classList.remove("show"), 2000);
-}
-
-function setRepoLoading(isLoading) {
-  repoSpinner.classList.toggle("active", isLoading);
-  loadRepoBtn.disabled = isLoading;
-}
-
 function getAuthToken() {
-  const inputToken = repoTokenInput.value.trim();
+  const inputToken = elements.repoTokenInput.value.trim();
   if (inputToken) {
     return inputToken;
   }
   return "";
 }
 
-function buildAuthHeaders() {
-  const token = getAuthToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
+function getStatusMessage(id, data) {
+  const entry = STATUS_MESSAGES[id];
+  if (!entry) {
+    return "";
+  }
+  const text = typeof entry.text === "function" ? entry.text(data || {}) : entry.text;
+  return text || "";
 }
 
-async function fetchWithRetry(url, options = {}, retries = 2) {
-  const response = await fetch(url, options);
-  if (response.status === 403 && response.headers.get("x-ratelimit-remaining") === "0" && retries > 0) {
-    const reset = Number(response.headers.get("x-ratelimit-reset") || 0) * 1000;
-    const wait = Math.max(reset - Date.now(), 1000);
-    setStatus(`GitHub rate limit reached. Retrying in ${Math.ceil(wait / 1000)}s...`);
-    await new Promise((resolve) => setTimeout(resolve, wait));
-    return fetchWithRetry(url, options, retries - 1);
+function status(id, data) {
+  const entry = STATUS_MESSAGES[id];
+  if (!entry) {
+    return;
   }
-  return response;
+  const message = getStatusMessage(id, data);
+  const isError = entry.tone === "error";
+  const isSuccess = entry.tone === "success";
+  ui.setStatus(message, isError, isSuccess);
 }
 
-async function getGitHubError(response) {
-  let detail = "";
-  try {
-    const data = await response.json();
-    detail = data.message || "";
-  } catch (error) {
-    detail = "";
+function showLoadFailure(error) {
+  status("fileLoadFailed", { detail: error?.message || "" });
+  ui.setOutputState("error");
+}
+
+function ensureOnline(statusId) {
+  if (navigator.onLine) {
+    return true;
   }
-  return `GitHub error (${response.status}) ${detail}`.trim();
+  if (statusId) {
+    status(statusId);
+  }
+  return false;
+}
+
+function onRateLimit(wait) {
+  ui.setStatus(`GitHub rate limit reached. Retrying in ${Math.ceil(wait / 1000)}s...`);
 }
 
 function escapeHtml(value) {
@@ -241,32 +260,8 @@ async function ensureLibrariesLoaded() {
   librariesLoaded = true;
 }
 
-function splitMarkdownIntoChunks(markdown, targetSize = MARKDOWN_CHUNK_TARGET) {
-  const lines = markdown.split("\n");
-  const chunks = [];
-  let buffer = "";
-  let insideFence = false;
-
-  const pushBuffer = () => {
-    if (buffer.trim()) {
-      chunks.push(buffer.replace(/\n{3,}/g, "\n\n"));
-    }
-    buffer = "";
-  };
-
-  lines.forEach((line, index) => {
-    if (/^\s*(```|~~~)/.test(line)) {
-      insideFence = !insideFence;
-    }
-    const suffix = index === lines.length - 1 ? "" : "\n";
-    buffer += line + suffix;
-    if (!insideFence && buffer.length >= targetSize) {
-      pushBuffer();
-    }
-  });
-
-  pushBuffer();
-  return chunks;
+function getChunkTarget() {
+  return MARKDOWN_CHUNK_TARGET;
 }
 
 function scrambleBytes(bytes) {
@@ -300,9 +295,7 @@ function scrubChunk(chunk) {
 }
 
 function resetChunkRenderState() {
-  activePayload = null;
-  chunkDecoder = null;
-  chunkCursor = 0;
+  sessionState.resetChunkState();
 }
 
 async function createChunkDecoder(payload, accessPhrase) {
@@ -322,48 +315,97 @@ async function appendMarkdownChunk(markdown) {
       window.hljs.highlightElement(block);
     }
   });
-  outputEl.append(...fragment.childNodes);
+  elements.outputEl.append(...fragment.childNodes);
 }
 
-async function renderNextChunk() {
-  if (!activePayload || !chunkDecoder || chunkCursor >= activePayload.chunks.length || isChunkLoading) {
-    loadMoreBtn.hidden = true;
-    updateAutoLoadObserver();
-    return;
+async function decodeChunk(chunkEntry, index) {
+  const chunkDecoder = sessionState.chunkDecoder;
+  if (!chunkDecoder) {
+    throw new Error("Decoding module unavailable.");
   }
+  const decodedBytes = await chunkDecoder(chunkEntry, index);
+  return scrambleBytes(decodedBytes);
+}
 
-  resetInactivityTimer();
-  const chunkEntry = activePayload.chunks[chunkCursor];
-  chunkCursor += 1;
-  isChunkLoading = true;
-
-  const start = performance.now();
-  let scrambled = null;
-  let markdown = "";
+async function renderChunk(scrambledChunk) {
+  const markdown = descrambleToString(scrambledChunk);
   try {
-    const decodedBytes = await chunkDecoder(chunkEntry, chunkCursor - 1);
-    scrambled = scrambleBytes(decodedBytes);
-    markdown = descrambleToString(scrambled);
     await appendMarkdownChunk(markdown);
-  } catch (error) {
-    setStatus(`Failed to render chunk: ${error.message}`, true);
   } finally {
-    scrubChunk(scrambled);
-    markdown = "";
-    isChunkLoading = false;
+    return markdown;
   }
+}
 
-  const duration = Math.round(performance.now() - start);
-  perfIndicator.textContent = `Render: ${duration}ms`;
-  loadMoreBtn.hidden = chunkCursor >= activePayload.chunks.length;
-  if (!loadMoreBtn.hidden) {
-    setStatus("More content will load near the end of the page.");
+function finalizeChunkRender(scrambledChunk, markdown) {
+  scrubChunk(scrambledChunk);
+  if (markdown) {
+    markdown = "";
+  }
+}
+
+function updateChunkUi(activePayload) {
+  elements.loadMoreBtn.hidden = sessionState.chunkCursor >= activePayload.chunks.length;
+  if (!elements.loadMoreBtn.hidden) {
+    status("loadMoreHint");
   }
   updateAutoLoadObserver();
 }
 
+function acquireChunkLock() {
+  if (chunkLock) {
+    return false;
+  }
+  chunkLock = true;
+  return true;
+}
+
+function releaseChunkLock() {
+  chunkLock = false;
+}
+
+async function renderNextChunk() {
+  const activePayload = sessionState.activePayload;
+  if (!activePayload || !sessionState.chunkDecoder || sessionState.chunkCursor >= activePayload.chunks.length) {
+    if (activePayload) {
+      elements.loadMoreBtn.hidden = true;
+      updateAutoLoadObserver();
+    }
+    return;
+  }
+
+  if (!acquireChunkLock()) {
+    return;
+  }
+
+  resetInactivityTimer();
+  const chunkEntry = activePayload.chunks[sessionState.chunkCursor];
+  sessionState.advanceChunkCursor();
+
+  const start = SHOW_PERF_METRICS ? performance.now() : 0;
+  let scrambled = null;
+  let markdown = "";
+  try {
+    scrambled = await decodeChunk(chunkEntry, sessionState.chunkCursor - 1);
+    markdown = await renderChunk(scrambled);
+  } catch (error) {
+    status("chunkRenderFailed", { detail: error.message });
+  } finally {
+    finalizeChunkRender(scrambled, markdown);
+    releaseChunkLock();
+  }
+
+  if (SHOW_PERF_METRICS) {
+    const duration = Math.round(performance.now() - start);
+    elements.perfIndicator.textContent = `Render: ${duration}ms`;
+  } else {
+    elements.perfIndicator.textContent = "";
+  }
+  updateChunkUi(activePayload);
+}
+
 function autoLoadNextChunkIfNeeded() {
-  if (!activePayload || !chunkDecoder || isChunkLoading || chunkCursor >= activePayload.chunks.length) {
+  const activePayload = sessionState.activePayload;
+  if (!activePayload || !sessionState.chunkDecoder || chunkLock || sessionState.chunkCursor >= activePayload.chunks.length) {
     return;
   }
   const scrollPosition = window.scrollY + window.innerHeight;
@@ -406,35 +448,36 @@ function updateAutoLoadObserver() {
       { root: null, rootMargin: AUTO_LOAD_ROOT_MARGIN, threshold: 0.1 }
     );
   }
-  if (loadMoreBtn.hidden) {
-    autoLoadObserver.unobserve(loadMoreBtn);
+  if (elements.loadMoreBtn.hidden) {
+    autoLoadObserver.unobserve(elements.loadMoreBtn);
   } else {
-    autoLoadObserver.observe(loadMoreBtn);
+    autoLoadObserver.observe(elements.loadMoreBtn);
   }
 }
 
 async function renderMarkdown(payload, accessPhrase) {
-  copyStatus.textContent = "";
-  outputEl.innerHTML = "";
-  clearSearchResults();
-  loadMoreBtn.hidden = true;
+  elements.copyStatus.textContent = "";
+  ui.clearElement(elements.outputEl);
+  ui.clearSearchResults();
+  elements.loadMoreBtn.hidden = true;
   resetInactivityTimer();
 
   if (!payload?.chunks?.length) {
-    hasDeparsedContent = false;
+    sessionState.setHasDeparsedContent(false);
     return;
   }
 
-  hasDeparsedContent = true;
+  sessionState.setHasDeparsedContent(true);
   resetChunkRenderState();
+  sessionState.markLoading();
 
   try {
     await ensureLibrariesLoaded();
-    activePayload = payload;
-    chunkDecoder = await createChunkDecoder(payload, accessPhrase);
+    sessionState.setActivePayload(payload);
+    sessionState.setChunkDecoder(await createChunkDecoder(payload, accessPhrase));
     await renderNextChunk();
   } catch (error) {
-    setStatus(`Render failed: ${error.message}`, true);
+    status("renderFailed", { detail: error.message });
     resetChunkRenderState();
   }
 }
@@ -443,12 +486,8 @@ async function encodeContent(markdown, accessPhrase) {
   if (!payloadCodec.encodePayloadChunks) {
     throw new Error("Encoding module unavailable.");
   }
-  const chunks = splitMarkdownIntoChunks(markdown);
+  const chunks = splitMarkdownIntoChunks(markdown, getChunkTarget());
   return payloadCodec.encodePayloadChunks(chunks, accessPhrase, FORMAT_VERSION);
-}
-
-function isParsedPayloadFile(name) {
-  return name.endsWith(DATA_EXTENSION);
 }
 
 function assertPayloadFormat(payload) {
@@ -480,253 +519,57 @@ function assertPayloadFormat(payload) {
   });
 }
 
-function clearRepoFileList() {
-  repoFileList.innerHTML = "";
-}
-
-function updatePreview(file) {
-  if (!file) {
-    previewMeta.textContent = "Select a file to preview.";
-    return;
-  }
-  const status = file.isParsed ? "Parsed (.md.data)" : "Unsupported";
-  const size = file.size ? `${file.size} bytes` : "Unknown size";
-  previewMeta.textContent = `${file.name} · ${status} · ${size}`;
-}
-
-function createFileItem(file) {
-  const item = document.createElement("li");
-  item.className = "file-item";
-
-  const meta = document.createElement("div");
-  meta.className = "file-meta";
-  const title = document.createElement("strong");
-  title.textContent = file.name;
-  const subtitle = document.createElement("span");
-  subtitle.textContent = file.path;
-  meta.appendChild(title);
-  meta.appendChild(subtitle);
-
-  const statusIcon = document.createElement("span");
-  statusIcon.className = "icon";
-  statusIcon.textContent = "•";
-
-  const actions = document.createElement("div");
-  actions.className = "file-actions";
-  const loadButton = document.createElement("button");
-  loadButton.type = "button";
-  loadButton.textContent = "Load";
-  loadButton.addEventListener("click", () => handleRepoFileLoad(file));
-  actions.appendChild(loadButton);
-
-  item.appendChild(meta);
-  item.appendChild(statusIcon);
-  item.appendChild(actions);
-  item.addEventListener("click", () => updatePreview(file));
-
-  return item;
-}
-
-function renderFileGroups(entries) {
-  clearRepoFileList();
-  if (!entries.length) {
-    const empty = document.createElement("li");
-    empty.textContent = "No parsed markdown files (.md.data) found.";
-    repoFileList.appendChild(empty);
-    return;
-  }
-
-  const grouped = entries.reduce((acc, entry) => {
-    const key = entry.category || "Root";
-    if (!acc[key]) {
-      acc[key] = [];
-    }
-    acc[key].push(entry);
-    return acc;
-  }, {});
-
-  Object.keys(grouped)
-    .sort()
-    .forEach((category) => {
-      const header = document.createElement("li");
-      header.className = "folder-header";
-      header.textContent = category;
-      repoFileList.appendChild(header);
-      grouped[category].forEach((file) => {
-        repoFileList.appendChild(createFileItem(file));
-      });
-    });
-}
-
-function filterEntries(entries, query) {
-  if (!query) {
-    return entries;
-  }
-  const lower = query.toLowerCase();
-  return entries.filter((entry) => {
-    if (entry.name.toLowerCase().includes(lower)) {
-      return true;
-    }
-    return false;
-  });
-}
-
-function filterByCategory(entries) {
-  const category = categoryFilter.value;
-  if (!category) {
-    return entries;
-  }
-  return entries.filter((entry) => entry.category === category);
-}
-
-function updateCategoryOptions(entries) {
-  const categories = Array.from(new Set(entries.map((entry) => entry.category))).sort();
-  categoryFilter.innerHTML = "<option value=\"\">All categories</option>";
-  categories.forEach((category) => {
-    const option = document.createElement("option");
-    option.value = category;
-    option.textContent = category;
-    categoryFilter.appendChild(option);
-  });
-}
-
 function getFilteredEntries(entries) {
-  const query = fileFilterInput.value.trim();
-  return filterByCategory(filterEntries(entries, query));
-}
-
-function normalizeRepoPath(path) {
-  const trimmed = path.trim();
-  if (!trimmed) {
-    return "docs";
-  }
-  return trimmed.replace(/^\/+|\/+$/g, "");
-}
-
-function ensurePayloadExtension(path) {
-  if (!path) {
-    return "";
-  }
-  return path.endsWith(DATA_EXTENSION) ? path : `${path}${DATA_EXTENSION}`;
-}
-
-function getRepoCategory(entryPath, rootPath) {
-  const normalizedRoot = rootPath ? rootPath.replace(/\/+$/g, "") : "";
-  const prefix = normalizedRoot ? `${normalizedRoot}/` : "";
-  const relative = entryPath.startsWith(prefix) ? entryPath.slice(prefix.length) : entryPath;
-  return relative.split("/").slice(0, -1).join("/");
-}
-
-async function fetchRepoEntries(owner, repo, branch, path, rootPath = path) {
-  const pathSegment = path ? `/${path}` : "";
-  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents${pathSegment}?ref=${branch}`;
-  const response = await fetchWithRetry(apiUrl, {
-    headers: buildAuthHeaders(),
-    cache: "no-store",
-  });
-  if (!response.ok) {
-    throw new Error(await getGitHubError(response));
-  }
-  const entries = await response.json();
-  if (!Array.isArray(entries)) {
-    throw new Error("Unexpected GitHub response format.");
-  }
-  const files = [];
-  for (const entry of entries) {
-    if (entry.type === "dir") {
-      const nested = await fetchRepoEntries(owner, repo, branch, entry.path, rootPath);
-      files.push(...nested);
-    } else if (entry.type === "file" && isParsedPayloadFile(entry.name)) {
-      const category = getRepoCategory(entry.path, rootPath);
-      files.push({
-        name: entry.name,
-        path: entry.path,
-        isParsed: isParsedPayloadFile(entry.name),
-        category: category || "Root",
-        source: "repo",
-        size: entry.size,
-      });
-    }
-  }
-  return files;
-}
-
-function rawGitHubUrl(owner, repo, branch, path) {
-  return `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${path}`;
-}
-
-async function fetchRawFile(owner, repo, branch, path, token) {
-  if (token) {
-    const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}?ref=${branch}`;
-      const response = await fetchWithRetry(apiUrl, {
-        headers: {
-          ...buildAuthHeaders(),
-          Accept: "application/vnd.github.raw",
-        },
-        cache: "no-store",
-      });
-    if (response.ok) {
-      return response;
-    }
-    if (response.status === 401 || response.status === 403) {
-      const fallback = await fetchWithRetry(apiUrl, {
-        headers: {
-          Authorization: `token ${token}`,
-          Accept: "application/vnd.github.raw",
-        },
-        cache: "no-store",
-      });
-      if (!fallback.ok) {
-        throw new Error(await getGitHubError(fallback));
-      }
-      return fallback;
-    }
-    throw new Error(await getGitHubError(response));
-  }
-  const response = await fetchWithRetry(rawGitHubUrl(owner, repo, branch, path), {
-    cache: "no-store",
-  });
-  if (!response.ok) {
-    throw new Error(await getGitHubError(response));
-  }
-  return response;
+  const query = elements.fileFilterInput.value.trim();
+  const category = elements.categoryFilter.value;
+  return filterByCategory(filterEntries(entries, query), category);
 }
 
 async function loadRepoFiles() {
-  const owner = repoOwnerInput.value.trim();
-  const repo = repoNameInput.value.trim();
-  const branch = repoBranchInput.value.trim() || "main";
-  const repoPath = normalizeRepoPath(repoPathInput.value);
+  const owner = elements.repoOwnerInput.value.trim();
+  const repo = elements.repoNameInput.value.trim();
+  const branch = elements.repoBranchInput.value.trim() || "main";
+  const repoPath = normalizeRepoPath(elements.repoPathInput.value);
   const displayPath = repoPath ? `${repoPath}/` : "repo root";
+  const authHeaders = buildAuthHeaders(getAuthToken());
 
   if (!owner || !repo) {
-    setStatus("Enter a GitHub owner and repository name.", true);
+    status("repoInfoRequired");
     return;
   }
 
-  if (!navigator.onLine) {
-    setStatus("Offline mode: unable to fetch GitHub repo list.", true);
-    renderFileGroups(getFilteredEntries([...allRepoEntries, ...bundleEntries]));
+  if (!ensureOnline("repoListOffline")) {
+    ui.renderFileGroups(getFilteredEntries([...allRepoEntries, ...bundleEntries]), {
+      onLoadFile: handleRepoFileLoad,
+      onPreview: ui.updatePreview,
+    });
     return;
   }
 
-  setRepoLoading(true);
-  setStatus(`Loading ${displayPath} listing from GitHub...`);
+  ui.setRepoLoading(true);
+  status("repoListLoading", { path: displayPath });
   try {
-    allRepoEntries = await fetchRepoEntries(owner, repo, branch, repoPath);
+    allRepoEntries = await fetchRepoEntries({
+      owner,
+      repo,
+      branch,
+      path: repoPath,
+      authHeaders,
+      dataExtension: DATA_EXTENSION,
+      onRateLimit,
+    });
     const combined = [...allRepoEntries, ...bundleEntries];
-    updateCategoryOptions(combined);
-    renderFileGroups(getFilteredEntries(combined));
-    setStatus(
-      `Loaded ${allRepoEntries.length} parsed payload files (.md.data) from ${displayPath}.`,
-      false,
-      true
-    );
+    ui.updateCategoryOptions(combined);
+    ui.renderFileGroups(getFilteredEntries(combined), {
+      onLoadFile: handleRepoFileLoad,
+      onPreview: ui.updatePreview,
+    });
+    status("repoListLoaded", { count: allRepoEntries.length, path: displayPath });
   } catch (error) {
-    renderFileGroups([]);
-    setStatus(`Failed to load repo files: ${error.message}`, true);
+    ui.renderFileGroups([], { onLoadFile: handleRepoFileLoad, onPreview: ui.updatePreview });
+    status("repoListFailed", { detail: error.message });
   } finally {
-    setRepoLoading(false);
+    ui.setRepoLoading(false);
   }
 }
 
@@ -734,136 +577,161 @@ function updateHistory(path, size) {
   const entries = historyStore.get(path) || [];
   entries.unshift({ timestamp: new Date().toISOString(), size });
   historyStore.set(path, entries.slice(0, 5));
-  renderHistory(entries);
-}
-
-function renderHistory(entries) {
-  historyList.innerHTML = "";
-  entries.forEach((entry) => {
-    const item = document.createElement("li");
-    item.textContent = `${entry.timestamp} · ${entry.size} bytes`;
-    historyList.appendChild(item);
-  });
+  ui.renderHistory(entries);
 }
 
 function getAccessPhrase() {
-  return accessPhraseInput.value.trim();
+  return elements.accessPhraseInput.value.trim();
+}
+
+function requireAccessPhrase({ onMissing }) {
+  const accessPhrase = getAccessPhrase();
+  if (!accessPhrase) {
+    if (onMissing) {
+      onMissing();
+    }
+    return null;
+  }
+  return accessPhrase;
+}
+
+async function loadPayload({ payload, path, size, fileMeta, accessPhrase, successMessage }) {
+  sessionState.setCurrentFilePath(path);
+  await renderMarkdown(payload, accessPhrase);
+  ui.setStatus(successMessage, false, true);
+  ui.setOutputState("success");
+  updateHistory(path, size);
+  if (fileMeta) {
+    ui.updatePreview(fileMeta);
+  }
+  if (fileMeta?.source === "repo" || fileMeta?.source === "bundle") {
+    ui.renderFileGroups(getFilteredEntries([...allRepoEntries, ...bundleEntries]), {
+      onLoadFile: handleRepoFileLoad,
+      onPreview: ui.updatePreview,
+    });
+  }
+  if (broadcast) {
+    broadcast.postMessage({ type: "content", file: path });
+  }
 }
 
 async function handleRepoFileLoad(file) {
   if (!file.isParsed) {
-    setStatus("Only parsed markdown payloads (.md.data) are supported.", true);
+    status("fileParsedOnly");
     return;
   }
-  const owner = repoOwnerInput.value.trim();
-  const repo = repoNameInput.value.trim();
-  const branch = repoBranchInput.value.trim() || "main";
-  const accessPhrase = accessPhraseInput.value.trim();
+  const owner = elements.repoOwnerInput.value.trim();
+  const repo = elements.repoNameInput.value.trim();
+  const branch = elements.repoBranchInput.value.trim() || "main";
+  const accessPhrase = requireAccessPhrase({
+    onMissing: () => status("accessRequired"),
+  });
+  if (!accessPhrase) {
+    return;
+  }
   const token = getAuthToken();
+  const authHeaders = buildAuthHeaders(token);
 
   if (file.source !== "bundle" && (!owner || !repo)) {
-    setStatus("Enter a GitHub owner and repository name.", true);
+    status("repoInfoRequired");
     return;
   }
-  if (file.source !== "bundle" && !navigator.onLine) {
-    setStatus("Offline mode: unable to fetch file from GitHub.", true);
-    return;
-  }
-
-  if (file.isParsed && !accessPhrase) {
-    setStatus("Enter a session code before opening files.", true);
+  if (file.source !== "bundle" && !ensureOnline("fileLoadOffline")) {
     return;
   }
 
-  setStatus("Loading file...");
-  setOutputState("");
+  status("fileLoadStarting");
+  ui.setOutputState("");
   try {
     let payloadSize = file.size || 0;
     let payload = null;
-    if (file.source === "bundle") {
-      payload = parsedCache.get(file.path);
+  if (file.source === "bundle") {
+      payload = bundlePayloads.get(file.path);
       if (!payload) {
-        throw new Error(`Missing export data for ${file.path}.`);
+        throw new Error(getStatusMessage("fileMissingBundleData", { path: file.path }));
       }
       assertPayloadFormat(payload);
       payloadSize = JSON.stringify(payload).length;
     } else {
-      const response = await fetchRawFile(owner, repo, branch, file.path, token);
+      const response = await fetchRawFile({
+        owner,
+        repo,
+        branch,
+        path: file.path,
+        token,
+        authHeaders,
+        onRateLimit,
+      });
       payload = await response.json();
       assertPayloadFormat(payload);
-      parsedCache.set(file.path, payload);
+      livePayloads.set(file.path, payload);
       payloadSize = JSON.stringify(payload).length;
     }
-    currentFilePath = file.path;
-    await renderMarkdown(payload, accessPhrase);
-    setStatus("File loaded successfully.", false, true);
-    setOutputState("success");
-    updateHistory(file.path, payloadSize);
-    renderFileGroups(getFilteredEntries([...allRepoEntries, ...bundleEntries]));
-    updatePreview(file);
-    if (broadcast) {
-      broadcast.postMessage({ type: "content", file: file.path });
-    }
+    await loadPayload({
+      payload,
+      path: file.path,
+      size: payloadSize,
+      fileMeta: file,
+      accessPhrase,
+      successMessage: getStatusMessage("fileLoadSuccess"),
+    });
   } catch (error) {
-    setStatus(`Failed to load file: ${error.message}`, true);
-    setOutputState("error");
+    showLoadFailure(error);
   }
 }
 
-
 async function handleFileLoad() {
-  const file = fileInput.files[0];
-  const accessPhrase = accessPhraseInput.value.trim();
+  const file = elements.fileInput.files[0];
+  const accessPhrase = requireAccessPhrase({
+    onMissing: () => status("accessRequiredOpen"),
+  });
 
   if (!file) {
-    setStatus("Choose a local parsed payload file first.", true);
+    status("fileMissingLocal");
     return;
   }
 
   if (!accessPhrase) {
-    setStatus("Enter a session code before opening.", true);
     return;
   }
 
-  setStatus("Loading local file...");
-  setOutputState("");
+  status("fileLocalLoadStarting");
+  ui.setOutputState("");
 
   try {
     const contents = await file.text();
     const payload = JSON.parse(contents);
     assertPayloadFormat(payload);
-    parsedCache.set(file.name, payload);
-    currentFilePath = file.name;
-    await renderMarkdown(payload, accessPhrase);
-    setStatus("Local file processed successfully.", false, true);
-    setOutputState("success");
-    updateHistory(file.name, file.size);
-    updatePreview({ name: file.name, path: file.name, isParsed: true, size: file.size });
-    if (broadcast) {
-      broadcast.postMessage({ type: "content", file: file.name });
-    }
+    livePayloads.set(file.name, payload);
+    await loadPayload({
+      payload,
+      path: file.name,
+      size: file.size,
+      fileMeta: { name: file.name, path: file.name, isParsed: true, size: file.size },
+      accessPhrase,
+      successMessage: getStatusMessage("fileLocalLoadSuccess"),
+    });
   } catch (error) {
-    setStatus(`Failed to process file: ${error.message}`, true);
-    setOutputState("error");
+    showLoadFailure(error);
   }
 }
 
-function clearDeparsedContent(reason) {
-  outputEl.innerHTML = "";
-  currentFilePath = "";
-  hasDeparsedContent = false;
-  parsedCache.clear();
-  historyStore.clear();
+function clearSession({ reasonId = "", keepHistory = false } = {}) {
+  ui.clearElement(elements.outputEl);
+  livePayloads.clear();
+  if (!keepHistory) {
+    historyStore.clear();
+    ui.clearElement(elements.historyList);
+  }
   resetChunkRenderState();
-  setOutputState("");
-  copyStatus.textContent = "";
-  loadMoreBtn.hidden = true;
-  historyList.innerHTML = "";
-  updatePreview(null);
-  searchResultsList.innerHTML = "";
-  searchSummary.textContent = "";
-  if (reason) {
-    setStatus(reason);
+  sessionState.clearAll();
+  ui.setOutputState("");
+  elements.copyStatus.textContent = "";
+  elements.loadMoreBtn.hidden = true;
+  ui.updatePreview(null);
+  ui.clearSearchResults();
+  if (reasonId) {
+    status(reasonId);
   }
   if (broadcast) {
     broadcast.postMessage({ type: "cleared" });
@@ -875,98 +743,45 @@ function resetInactivityTimer() {
     clearTimeout(inactivityTimer);
   }
   inactivityTimer = setTimeout(() => {
-    if (hasDeparsedContent) {
-  clearDeparsedContent("Processed content cleared after inactivity.");
+    if (sessionState.hasDeparsedContent) {
+      clearSession({ reasonId: "clearedIdle" });
     }
   }, inactivityLimitMs);
 }
 
 function updateInactivityTimeout() {
-  const minutes = Number.parseFloat(inactivityTimeoutInput.value);
+  const minutes = Number.parseFloat(elements.inactivityTimeoutInput.value);
   if (!Number.isFinite(minutes) || minutes <= 0) {
     inactivityLimitMs = DEFAULT_INACTIVITY_MINUTES * 60 * 1000;
-    inactivityTimeoutInput.value = String(DEFAULT_INACTIVITY_MINUTES);
+    elements.inactivityTimeoutInput.value = String(DEFAULT_INACTIVITY_MINUTES);
   } else {
     inactivityLimitMs = Math.round(minutes * 60 * 1000);
   }
   resetInactivityTimer();
 }
 
-function clearSearchResults() {
-  searchResultsList.innerHTML = "";
-  searchSummary.textContent = "";
-}
-
-function buildSearchPreview(text, matchIndex, queryLength) {
-  const radius = 48;
-  const start = Math.max(0, matchIndex - radius);
-  const end = Math.min(text.length, matchIndex + queryLength + radius);
-  const prefix = start > 0 ? "…" : "";
-  const suffix = end < text.length ? "…" : "";
-  const snippet = text.slice(start, end).replace(/\s+/g, " ").trim();
-  return `${prefix}${snippet}${suffix}`;
-}
-
-function renderSearchResults(results, query) {
-  clearSearchResults();
-  if (!query) {
-    return;
-  }
-  if (!results.length) {
-    const item = document.createElement("li");
-    item.textContent = "No matches found.";
-    searchResultsList.appendChild(item);
-    return;
-  }
-
-  results.forEach((result) => {
-    const item = document.createElement("li");
-    item.className = "file-item";
-    const meta = document.createElement("div");
-    meta.className = "file-meta";
-    const title = document.createElement("strong");
-    title.textContent = `Chunk ${result.chunkIndex + 1} · ${result.matchCount} match${
-      result.matchCount === 1 ? "" : "es"
-    }`;
-    const subtitle = document.createElement("span");
-    subtitle.textContent = result.preview;
-    meta.appendChild(title);
-    meta.appendChild(subtitle);
-
-    const actions = document.createElement("div");
-    actions.className = "file-actions";
-    const openButton = document.createElement("button");
-    openButton.type = "button";
-    openButton.textContent = "Open";
-    openButton.addEventListener("click", () => renderChunkAtIndex(result.chunkIndex));
-    actions.appendChild(openButton);
-
-    item.appendChild(meta);
-    item.appendChild(actions);
-    searchResultsList.appendChild(item);
-  });
-}
 
 async function renderChunkAtIndex(index) {
-  if (!activePayload) {
-    setStatus("Load a parsed file before opening a result.", true);
+  if (!sessionState.activePayload) {
+    status("searchLoadRequired");
     return;
   }
-  const accessPhrase = getAccessPhrase();
+  const accessPhrase = requireAccessPhrase({
+    onMissing: () => status("accessRequiredResult"),
+  });
   if (!accessPhrase) {
-    setStatus("Enter a session code before opening a result.", true);
     return;
   }
-  setStatus("Loading search result chunk...");
+  status("searchResultLoading");
   try {
     await ensureLibrariesLoaded();
-    chunkDecoder = await createChunkDecoder(activePayload, accessPhrase);
-    chunkCursor = Math.max(0, Math.min(index, activePayload.chunks.length - 1));
-    outputEl.innerHTML = "";
+    sessionState.setChunkDecoder(await createChunkDecoder(sessionState.activePayload, accessPhrase));
+    sessionState.setChunkCursor(Math.max(0, Math.min(index, sessionState.activePayload.chunks.length - 1)));
+    ui.clearElement(elements.outputEl);
     await renderNextChunk();
-    setStatus("Search result loaded.", false, true);
+    status("searchResultLoaded");
   } catch (error) {
-    setStatus(`Failed to load search result: ${error.message}`, true);
+    status("searchFailed", { detail: error.message });
   }
 }
 
@@ -974,8 +789,8 @@ function toggleTheme() {
   const root = document.documentElement;
   const isLight = root.dataset.theme === "light";
   root.dataset.theme = isLight ? "dark" : "light";
-  themeToggle.textContent = isLight ? "Switch to light" : "Switch to dark";
-  themeToggle.setAttribute("aria-pressed", String(!isLight));
+  elements.themeToggle.textContent = isLight ? "Switch to light" : "Switch to dark";
+  elements.themeToggle.setAttribute("aria-pressed", String(!isLight));
 }
 
 async function createPlaintextStream(payload, accessPhrase, onProgress) {
@@ -1074,7 +889,7 @@ function getSelectedOutputText(selection = window.getSelection()) {
     return "";
   }
   const range = selection.rangeCount ? selection.getRangeAt(0) : null;
-  if (!range || !outputEl.contains(range.commonAncestorContainer)) {
+  if (!range || !elements.outputEl.contains(range.commonAncestorContainer)) {
     return "";
   }
   return selection.toString();
@@ -1088,15 +903,15 @@ async function copyDeparsedContent() {
   const selectedText = getSelectedOutputText() || pendingOutputSelection;
   pendingOutputSelection = "";
   if (!selectedText) {
-    copyStatus.textContent = "Select text in the preview to copy.";
+    elements.copyStatus.textContent = "Select text in the preview to copy.";
     return;
   }
-  copyStatus.textContent = "Copying selection...";
+  elements.copyStatus.textContent = "Copying selection...";
   try {
     const result = await tryClipboardWrite(selectedText);
     if (result.ok) {
-      copyStatus.textContent = "Copied to clipboard.";
-      showToast("Copied to clipboard");
+      elements.copyStatus.textContent = "Copied to clipboard.";
+      ui.showToast("Copied to clipboard");
       return;
     }
     const ok = await fallbackExecCommandCopy(selectedText);
@@ -1105,50 +920,60 @@ async function copyDeparsedContent() {
         result.reason && result.reason !== "unavailable"
           ? ` Clipboard API blocked (${result.reason}).`
           : "";
-      copyStatus.textContent = `Copied (fallback mode).${detail} Keep the tab focused and use https or localhost.`;
-      showToast("Copied to clipboard");
+      elements.copyStatus.textContent = `Copied (fallback mode).${detail} Keep the tab focused and use https or localhost.`;
+      ui.showToast("Copied to clipboard");
     } else {
       const hint =
         result.reason === "unavailable"
           ? "Try https or localhost, and make sure the browser allows clipboard access."
           : "Try: use the Copy button, keep the tab focused, allow clipboard access in site settings, avoid embedded frames or guest mode.";
-      copyStatus.textContent = `Copy blocked (${result.reason}). ${hint}`;
+      elements.copyStatus.textContent = `Copy blocked (${result.reason}). ${hint}`;
     }
   } catch (error) {
     const name = error?.name || "error";
-    copyStatus.textContent = `Copy blocked (${name}). Try: use the Copy button, keep the tab focused, allow clipboard access in site settings, avoid embedded frames or guest mode.`;
+    elements.copyStatus.textContent = `Copy blocked (${name}). Try: use the Copy button, keep the tab focused, allow clipboard access in site settings, avoid embedded frames or guest mode.`;
   }
 }
 
 async function exportText() {
-  if (!activePayload) {
-    setStatus("Nothing to export yet.", true);
+  if (!sessionState.activePayload) {
+    status("exportNothing");
     return;
   }
-  const accessPhrase = getAccessPhrase();
+  const accessPhrase = requireAccessPhrase({
+    onMissing: () => status("accessRequiredExport"),
+  });
   if (!accessPhrase) {
-    setStatus("Enter a session code before exporting.", true);
     return;
   }
   try {
-    setStatus("Preparing export...");
-    const blob = await buildPlaintextBlob(activePayload, accessPhrase);
+    status("exportPreparing");
+    const blob = await buildPlaintextBlob(sessionState.activePayload, accessPhrase);
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
-    link.download = `${currentFilePath || "processed-content"}.txt`;
+    link.download = `${sessionState.currentFilePath || "processed-content"}.txt`;
     link.click();
     URL.revokeObjectURL(link.href);
-    setStatus("Export ready.", false, true);
+    status("exportReady");
   } catch (error) {
-    setStatus(`Export failed: ${error.message}`, true);
+    status("exportFailed", { detail: error.message });
   }
 }
 
 function exportBundle() {
   const files = [];
-  parsedCache.forEach((payload, path) => {
-    files.push({ path, payload });
-  });
+  const seen = new Set();
+  const addPayloads = (store) => {
+    store.forEach((payload, path) => {
+      if (seen.has(path)) {
+        return;
+      }
+      seen.add(path);
+      files.push({ path, payload });
+    });
+  };
+  addPayloads(bundlePayloads);
+  addPayloads(livePayloads);
   const bundle = {
     version: FORMAT_VERSION,
     generatedAt: new Date().toISOString(),
@@ -1163,7 +988,7 @@ function exportBundle() {
 }
 
 async function importBundle() {
-  const file = importBundleInput.files[0];
+  const file = elements.importBundleInput.files[0];
   if (!file) {
     return;
   }
@@ -1173,89 +998,90 @@ async function importBundle() {
     if (!Array.isArray(bundle.files)) {
       throw new Error("Invalid export format.");
     }
-    bundleEntries = bundle.files.map((entry) => ({
-      name: entry.path.split("/").pop(),
-      path: entry.path,
-      isParsed: true,
-      category: "Imported Bundle",
-      source: "bundle",
-      size: JSON.stringify(entry.payload).length,
-    }));
+    bundleEntries = bundle.files.map((entry) => {
+      const size = JSON.stringify(entry.payload).length;
+      return {
+        name: entry.path.split("/").pop(),
+        path: entry.path,
+        isParsed: true,
+        category: "Imported Bundle",
+        source: "bundle",
+        size,
+      };
+    });
     bundle.files.forEach((entry) => {
       assertPayloadFormat(entry.payload);
-      parsedCache.set(entry.path, entry.payload);
+      bundlePayloads.set(entry.path, entry.payload);
     });
     const combined = [...allRepoEntries, ...bundleEntries];
-    updateCategoryOptions(combined);
-    renderFileGroups(getFilteredEntries(combined));
-    setStatus("Bundle imported.", false, true);
+    ui.updateCategoryOptions(combined);
+    ui.renderFileGroups(getFilteredEntries(combined), {
+      onLoadFile: handleRepoFileLoad,
+      onPreview: ui.updatePreview,
+    });
+    status("bundleImportSuccess");
   } catch (error) {
-    setStatus(`Failed to import export file: ${error.message}`, true);
+    status("bundleImportFailed", { detail: error.message });
   }
 }
 
 async function parseAndUpload() {
-  const owner = repoOwnerInput.value.trim();
-  const repo = repoNameInput.value.trim();
-  const branch = repoBranchInput.value.trim() || "main";
-  const targetPath = ensurePayloadExtension(parseTitleInput.value.trim());
-  const accessPhrase = accessPhraseInput.value.trim();
+  const owner = elements.repoOwnerInput.value.trim();
+  const repo = elements.repoNameInput.value.trim();
+  const branch = elements.repoBranchInput.value.trim() || "main";
+  const targetPath = ensurePayloadExtension(elements.parseTitleInput.value.trim(), DATA_EXTENSION);
+  const accessPhrase = getAccessPhrase();
   const token = getAuthToken();
-  const commitMessage = parseMessageInput.value.trim();
+  const commitMessage = elements.parseMessageInput.value.trim();
+  const authHeaders = buildAuthHeaders(token);
 
   if (!owner || !repo || !targetPath) {
-    setStatus("Provide owner, repo, and target path.", true);
+    status("repoUploadMissingInfo");
     return;
   }
   if (!accessPhrase) {
-    setStatus("Provide a session code and markdown content.", true);
+    status("accessRequiredParse");
     return;
   }
   if (!token) {
-    setStatus("GitHub token required to upload payload files.", true);
+    status("repoUploadNeedsToken");
     return;
   }
 
-  setStatus("Parsing and uploading to GitHub...");
+  status("parseUploadStart");
   try {
-    let markdown = parseContentInput.value.trim();
-    if (parseFileInput.files.length > 0) {
-      markdown = await parseFileInput.files[0].text();
-    }
+    const markdown = await collectParseSource();
     if (!markdown) {
-      setStatus("Provide a session code and markdown content.", true);
       return;
     }
-    const payload = await encodeContent(markdown, accessPhrase);
-    parseContentInput.value = "";
-    parseFileInput.value = "";
-    markdown = "";
+    const payload = await buildPayloadFromInput(markdown, accessPhrase);
     const body = {
       message: commitMessage || `Add payload ${targetPath}`,
       content: btoa(JSON.stringify(payload)),
       branch,
     };
-    const response = await fetchWithRetry(
+    const response = await fetchGitHubWithRetry(
       `https://api.github.com/repos/${owner}/${repo}/contents/${targetPath}`,
       {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
           Accept: "application/vnd.github+json",
-          ...buildAuthHeaders(),
+          ...authHeaders,
         },
         body: JSON.stringify(body),
         cache: "no-store",
-      }
+      },
+      { retries: 2, onRateLimit }
     );
     if (!response.ok) {
       throw new Error(await getGitHubError(response));
     }
-    setStatus("Uploaded file.", false, true);
-    parseTitleInput.value = "";
-    parseMessageInput.value = "";
+    status("parseUploadSuccess");
+    elements.parseTitleInput.value = "";
+    elements.parseMessageInput.value = "";
   } catch (error) {
-    setStatus(`Upload failed: ${error.message}`, true);
+    status("parseUploadFailed", { detail: error.message });
   }
 }
 
@@ -1268,109 +1094,104 @@ function triggerDownload(blob, filename) {
 }
 
 async function parseAndSave() {
-  const targetPath = ensurePayloadExtension(parseTitleInput.value.trim() || "local.md.data");
+  const targetPath = ensurePayloadExtension(
+    elements.parseTitleInput.value.trim() || "local.md.data",
+    DATA_EXTENSION
+  );
   const accessPhrase = getAccessPhrase();
 
   if (!accessPhrase) {
-    setStatus("Provide a session code and markdown content.", true);
+    status("accessRequiredParse");
     return;
   }
 
-  setStatus("Parsing for local save...");
+  status("parseLocalStart");
   try {
-    let markdown = parseContentInput.value.trim();
-    if (parseFileInput.files.length > 0) {
-      markdown = await parseFileInput.files[0].text();
-    }
+    const markdown = await collectParseSource();
     if (!markdown) {
-      setStatus("Provide a session code and markdown content.", true);
       return;
     }
-    const payload = await encodeContent(markdown, accessPhrase);
+    const payload = await buildPayloadFromInput(markdown, accessPhrase);
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     triggerDownload(blob, targetPath);
-    parseContentInput.value = "";
-    parseFileInput.value = "";
-    setStatus("Local file ready.", false, true);
+    status("parseLocalReady");
   } catch (error) {
-    setStatus(`Local save failed: ${error.message}`, true);
+    status("parseLocalFailed", { detail: error.message });
   }
 }
 
+async function collectParseSource() {
+  let markdown = elements.parseContentInput.value.trim();
+  if (elements.parseFileInput.files.length > 0) {
+    markdown = await elements.parseFileInput.files[0].text();
+  }
+  if (!markdown) {
+    status("accessRequiredParse");
+    return "";
+  }
+  return markdown;
+}
+
+async function buildPayloadFromInput(markdown, accessPhrase) {
+  const payload = await encodeContent(markdown, accessPhrase);
+  elements.parseContentInput.value = "";
+  elements.parseFileInput.value = "";
+  markdown = "";
+  return payload;
+}
+
 async function handleSearch() {
-  const query = searchInput.value.trim();
+  const query = elements.searchInput.value.trim();
   const runId = ++searchRunId;
-  clearSearchResults();
+  ui.clearSearchResults();
   if (!query) {
-    searchSummary.textContent = "";
+    elements.searchSummary.textContent = "";
     return;
   }
-  if (!activePayload) {
-    searchSummary.textContent = "Load a file to search.";
+  if (!sessionState.activePayload) {
+    elements.searchSummary.textContent = getStatusMessage("searchLoadRequired");
     return;
   }
-  const accessPhrase = getAccessPhrase();
+  const accessPhrase = requireAccessPhrase({
+    onMissing: () => {
+      elements.searchSummary.textContent = getStatusMessage("accessRequiredSearch");
+    },
+  });
   if (!accessPhrase) {
-    searchSummary.textContent = "Enter a session code to search.";
     return;
   }
-  searchSummary.textContent = "Scanning...";
-  const results = [];
-  const loweredQuery = query.toLowerCase();
+  elements.searchSummary.textContent = getStatusMessage("searchScanning");
 
   try {
-    await payloadCodec.decodePayloadChunks(
-      activePayload,
+    const results = await searchPayload({
+      payload: sessionState.activePayload,
+      query,
       accessPhrase,
-      FORMAT_VERSION,
-      async (bytes, index, total) => {
+      version: FORMAT_VERSION,
+      decodePayloadChunks: payloadCodec.decodePayloadChunks,
+      textDecoder: chunkTextDecoder,
+      buildPreview: buildSearchPreview,
+      onProgress: (current, total) => {
         if (runId !== searchRunId) {
           return;
         }
-        let text = chunkTextDecoder.decode(bytes);
-        let lower = text.toLowerCase();
-        let offset = 0;
-        let matchCount = 0;
-        let firstMatch = -1;
-        const offsets = [];
-        while (true) {
-          const next = lower.indexOf(loweredQuery, offset);
-          if (next === -1) {
-            break;
-          }
-          if (firstMatch === -1) {
-            firstMatch = next;
-          }
-          if (offsets.length < 5) {
-            offsets.push(next);
-          }
-          matchCount += 1;
-          offset = next + loweredQuery.length;
-        }
-        if (matchCount > 0) {
-          results.push({
-            chunkIndex: index,
-            matchCount,
-            offsets,
-            preview: buildSearchPreview(text, firstMatch, loweredQuery.length),
-          });
-        }
-        searchSummary.textContent = `Scanning ${index + 1} of ${total}...`;
-        text = "";
-        lower = "";
-      }
-    );
+        elements.searchSummary.textContent = `Scanning ${current} of ${total}...`;
+      },
+      shouldAbort: () => runId !== searchRunId,
+    });
     if (runId !== searchRunId) {
       return;
     }
-    searchSummary.textContent = `Found ${results.length} matching chunk${results.length === 1 ? "" : "s"}.`;
-    renderSearchResults(results, query);
+    elements.searchSummary.textContent = `Found ${results.length} matching chunk${
+      results.length === 1 ? "" : "s"
+    }.`;
+    ui.renderSearchResults(results, query, { onOpenResult: renderChunkAtIndex });
   } catch (error) {
     if (runId !== searchRunId) {
       return;
     }
-    searchSummary.textContent = "";
-    setStatus(`Search failed: ${error.message}`, true);
+    elements.searchSummary.textContent = "";
+    status("searchFailed", { detail: error.message });
   }
 }
 
@@ -1379,11 +1200,11 @@ function registerShortcuts(event) {
     return;
   }
   if (event.key === "f") {
-    fileFilterInput.focus();
+    elements.fileFilterInput.focus();
     event.preventDefault();
   }
   if (event.key === "s") {
-    searchInput.focus();
+    elements.searchInput.focus();
     event.preventDefault();
   }
   if (event.key === "t") {
@@ -1404,26 +1225,32 @@ function registerShortcuts(event) {
   }
 }
 
-loadFileBtn.addEventListener("click", handleFileLoad);
-loadRepoBtn.addEventListener("click", loadRepoFiles);
-themeToggle.addEventListener("click", toggleTheme);
-copyOutputBtn.addEventListener("pointerdown", captureOutputSelection);
-copyOutputBtn.addEventListener("click", copyDeparsedContent);
-loadMoreBtn.addEventListener("click", renderNextChunk);
-searchInput.addEventListener("input", handleSearch);
-categoryFilter.addEventListener("change", () => {
-  renderFileGroups(getFilteredEntries([...allRepoEntries, ...bundleEntries]));
+elements.loadFileBtn.addEventListener("click", handleFileLoad);
+elements.loadRepoBtn.addEventListener("click", loadRepoFiles);
+elements.themeToggle.addEventListener("click", toggleTheme);
+elements.copyOutputBtn.addEventListener("pointerdown", captureOutputSelection);
+elements.copyOutputBtn.addEventListener("click", copyDeparsedContent);
+elements.loadMoreBtn.addEventListener("click", renderNextChunk);
+elements.searchInput.addEventListener("input", handleSearch);
+elements.categoryFilter.addEventListener("change", () => {
+  ui.renderFileGroups(getFilteredEntries([...allRepoEntries, ...bundleEntries]), {
+    onLoadFile: handleRepoFileLoad,
+    onPreview: ui.updatePreview,
+  });
 });
-fileFilterInput.addEventListener("input", () => {
-  renderFileGroups(getFilteredEntries([...allRepoEntries, ...bundleEntries]));
+elements.fileFilterInput.addEventListener("input", () => {
+  ui.renderFileGroups(getFilteredEntries([...allRepoEntries, ...bundleEntries]), {
+    onLoadFile: handleRepoFileLoad,
+    onPreview: ui.updatePreview,
+  });
 });
-inactivityTimeoutInput.addEventListener("input", updateInactivityTimeout);
-exportTextBtn.addEventListener("click", exportText);
-exportBundleBtn.addEventListener("click", exportBundle);
-importBundleInput.addEventListener("change", importBundle);
-parseUploadBtn.addEventListener("click", parseAndUpload);
-parseSaveBtn.addEventListener("click", parseAndSave);
-outputEl.addEventListener("contextmenu", (event) => event.preventDefault());
+elements.inactivityTimeoutInput.addEventListener("input", updateInactivityTimeout);
+elements.exportTextBtn.addEventListener("click", exportText);
+elements.exportBundleBtn.addEventListener("click", exportBundle);
+elements.importBundleInput.addEventListener("change", importBundle);
+elements.parseUploadBtn.addEventListener("click", parseAndUpload);
+elements.parseSaveBtn.addEventListener("click", parseAndSave);
+elements.outputEl.addEventListener("contextmenu", (event) => event.preventDefault());
 
 document.addEventListener("keydown", registerShortcuts);
 
@@ -1440,7 +1267,8 @@ if ("serviceWorker" in navigator) {
 }
 
 window.addEventListener("beforeunload", (event) => {
-  if (hasDeparsedContent) {
+  if (sessionState.hasDeparsedContent) {
+    clearSession({ keepHistory: true });
     event.preventDefault();
     event.returnValue = "";
   }
@@ -1448,8 +1276,10 @@ window.addEventListener("beforeunload", (event) => {
 
 if (broadcast) {
   broadcast.onmessage = (event) => {
-    if (event.data?.type === "content" && hasDeparsedContent && event.data.file !== currentFilePath) {
-      clearDeparsedContent("Another tab processed content. Cleared for safety.");
+    if (event.data?.type === "content" && sessionState.hasDeparsedContent) {
+      if (event.data.file !== sessionState.currentFilePath) {
+        clearSession({ reasonId: "clearedRemote" });
+      }
     }
   };
 }

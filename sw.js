@@ -1,4 +1,6 @@
-const CACHE_NAME = "payload-cache-v1";
+const CACHE_VERSION = "v1";
+const CACHE_NAMES = [`payload-cache-${CACHE_VERSION}`];
+const CACHE_NAME = CACHE_NAMES[0];
 const DATA_EXTENSION = ".md.data";
 
 function isPayloadRequest(request) {
@@ -30,6 +32,16 @@ async function purgePlaintextMarkdown() {
   );
 }
 
+async function cleanupCaches() {
+  await purgePlaintextMarkdown();
+  const cacheNames = await caches.keys();
+  await Promise.all(
+    cacheNames
+      .filter((name) => !CACHE_NAMES.includes(name))
+      .map((name) => caches.delete(name))
+  );
+}
+
 self.addEventListener("install", (event) => {
   event.waitUntil(self.skipWaiting());
 });
@@ -37,16 +49,16 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
-      await purgePlaintextMarkdown();
-      const cacheNames = await caches.keys();
-      await Promise.all(
-        cacheNames
-          .filter((name) => name !== CACHE_NAME)
-          .map((name) => caches.delete(name))
-      );
+      await cleanupCaches();
       await self.clients.claim();
     })()
   );
+});
+
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "cleanup") {
+    event.waitUntil(cleanupCaches());
+  }
 });
 
 self.addEventListener("fetch", (event) => {
