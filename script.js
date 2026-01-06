@@ -118,8 +118,8 @@ async function fetchWithRetry(url, options = {}, retries = 2) {
 async function getGitHubError(response) {
   let detail = "";
   try {
-    const payload = await response.json();
-    detail = payload.message || "";
+    const data = await response.json();
+    detail = data.message || "";
   } catch (error) {
     detail = "";
   }
@@ -569,7 +569,7 @@ function getAccessPhraseForFile(path, provided) {
 
 async function handleRepoFileLoad(file) {
   if (!file.parsed) {
-    setStatus("Plain markdown is not supported. Use parsed payloads only.", true);
+    setStatus("Plain markdown is not supported. Use parsed files only.", true);
     return;
   }
   const owner = repoOwnerInput.value.trim();
@@ -609,7 +609,7 @@ async function handleRepoFileLoad(file) {
     if (file.source === "bundle") {
       const payload = parsedCache.get(file.path);
       if (!payload) {
-        throw new Error(`Missing bundle payload for ${file.path}.`);
+        throw new Error(`Missing export data for ${file.path}.`);
       }
       markdown = await decodeContent(payload, getAccessPhraseForFile(file.path, accessPhrase));
     } else {
@@ -853,7 +853,7 @@ function exportBundle() {
   const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
   const link = document.createElement("a");
   link.href = URL.createObjectURL(blob);
-  link.download = "parsed-bundle.json";
+  link.download = "export.json";
   link.click();
   URL.revokeObjectURL(link.href);
 }
@@ -867,7 +867,7 @@ async function importBundle() {
     const contents = await file.text();
     const bundle = JSON.parse(contents);
     if (!Array.isArray(bundle.files)) {
-      throw new Error("Invalid bundle format.");
+      throw new Error("Invalid export format.");
     }
     bundleEntries = bundle.files.map((entry) => ({
       name: entry.path.split("/").pop(),
@@ -885,7 +885,7 @@ async function importBundle() {
     renderFileGroups(getFilteredEntries(combined));
     setStatus("Bundle imported.", false, true);
   } catch (error) {
-    setStatus(`Failed to import bundle: ${error.message}`, true);
+    setStatus(`Failed to import export file: ${error.message}`, true);
   }
 }
 
