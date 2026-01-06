@@ -5,8 +5,8 @@ A client-side markdown parser and viewer that works directly in the browser. Des
 ## Features
 - Local parsing with an access phrase
 - GitHub `docs/` browser with folder grouping and search
-- Access phrase strength meter and per-file access phrases during a session
-- Optional GitHub token support for private repos and uploads
+- Per-file access phrases during a session
+- Optional GitHub token support for restricted repos and uploads
 - Lazy-loaded markdown rendering with sanitization and syntax highlighting
 - Export de-parsed content to text and bundle parsed payloads
 - Keyboard shortcuts for common actions (`f`, `p`, `t`, `c`, `l`, `m`)

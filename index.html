@@ -42,7 +42,7 @@
             <label for="search-input">Search content</label>
             <input id="search-input" type="search" placeholder="Search current file" />
             <small class="helper-text">
-              Searches scan chunks on demand, keep short previews only, never store decrypted text, and do not use the network.
+              Searches scan chunks on demand, keep short previews only, never store processed text, and do not use the network.
             </small>
           </div>
 
@@ -75,7 +75,7 @@
 
           <div class="control-group">
             <label for="repo-token">GitHub Token (optional)</label>
-            <input id="repo-token" type="password" placeholder="token for private repos" />
+            <input id="repo-token" type="password" placeholder="token for restricted repos" />
             <small class="helper-text">Token stays in memory and is never stored.</small>
           </div>
 
@@ -88,13 +88,13 @@
           <div class="control-group">
             <label for="repo-path">Repo Browser (.md.data only)</label>
             <input id="repo-path" type="text" value="docs/" />
-            <button id="load-repo" type="button">Load encrypted files</button>
+            <button id="load-repo" type="button">Load parsed files</button>
             <div class="spinner" id="repo-spinner" aria-hidden="true"></div>
-            <small class="helper-text">Only encrypted markdown payloads (.md.data) are supported.</small>
+            <small class="helper-text">Only parsed markdown payloads (.md.data) are supported.</small>
           </div>
 
           <div class="control-group">
-            <label for="sample-select">Sample Encrypted File</label>
+            <label for="sample-select">Sample Parsed File</label>
             <select id="sample-select">
               <option value="">Loading samples...</option>
             </select>
@@ -102,7 +102,7 @@
           </div>
 
           <div class="control-group">
-            <label for="file-input">Local Encrypted File (.md.data)</label>
+            <label for="file-input">Local Parsed File (.md.data)</label>
             <input id="file-input" type="file" accept=".json,.md.data" />
             <button id="load-file" type="button">Load File</button>
           </div>
@@ -118,7 +118,7 @@
           </div>
 
           <div class="control-group">
-            <label for="parse-title">Upload encrypted payload (.md.data)</label>
+            <label for="parse-title">Upload parsed payload (.md.data)</label>
             <input id="parse-title" type="text" placeholder="docs/new-file.md.data" />
             <input id="parse-file" type="file" accept=".md" />
             <textarea id="parse-content" rows="4" placeholder="Markdown content"></textarea>
@@ -129,7 +129,7 @@
 
         <section class="repo-files">
           <div class="section-header">
-            <h2>Encrypted Repo Files (.md.data)</h2>
+            <h2>Parsed Repo Files (.md.data)</h2>
           </div>
           <ul id="repo-file-list" class="file-list"></ul>
         </section>
