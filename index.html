@@ -95,14 +95,6 @@
           </div>
 
           <div class="control-group">
-            <label for="sample-select">Sample Parsed File</label>
-            <select id="sample-select">
-              <option value="">Loading samples...</option>
-            </select>
-            <button id="load-sample" type="button">Load Sample</button>
-          </div>
-
-          <div class="control-group">
             <label for="file-input">Local Parsed File (.md.data)</label>
             <input id="file-input" type="file" accept=".json,.md.data" />
             <button id="load-file" type="button">Load File</button>
@@ -149,7 +141,7 @@
       <main class="content">
         <section class="status" id="status" aria-live="polite"></section>
         <div class="content-actions">
-          <button id="copy-output" type="button">Copy de-parsed text</button>
+          <button id="copy-output" type="button">Copy selection</button>
           <button id="export-text" type="button">Export text</button>
           <span id="copy-status" class="copy-status" aria-live="polite"></span>
           <span id="perf-indicator" class="copy-status"></span>
@@ -160,10 +152,6 @@
             <span id="search-summary" class="copy-status"></span>
           </div>
           <ul id="search-results" class="file-list"></ul>
-          <small class="helper-text">
-            Data lifetime: brief per-chunk plaintext for scanning and previews. Persistence: none in storage; clipboard/download on request.
-            Network: none during search, copy, or export.
-          </small>
         </section>
         <div class="output-wrapper">
           <article id="output" class="markdown"></article>
