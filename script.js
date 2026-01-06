@@ -19,6 +19,7 @@ const copyOutputBtn = document.getElementById("copy-output");
 const copyStatus = document.getElementById("copy-status");
 const loadMoreBtn = document.getElementById("load-more");
 const searchInput = document.getElementById("search-input");
+const fileFilterInput = document.getElementById("file-filter");
 const categoryFilter = document.getElementById("category-filter");
 const exportTextBtn = document.getElementById("export-text");
 const exportBundleBtn = document.getElementById("export-bundle");
@@ -27,6 +28,8 @@ const perfIndicator = document.getElementById("perf-indicator");
 const historyList = document.getElementById("history-list");
 const toast = document.getElementById("toast");
 const previewMeta = document.getElementById("preview-meta");
+const searchResultsList = document.getElementById("search-results");
+const searchSummary = document.getElementById("search-summary");
 const parseTitleInput = document.getElementById("parse-title");
 const parseContentInput = document.getElementById("parse-content");
 const parseUploadBtn = document.getElementById("parse-upload");
@@ -61,6 +64,7 @@ let librariesLoaded = false;
 let activePayload = null;
 let chunkDecoder = null;
 let chunkCursor = 0;
+let searchRunId = 0;
 const broadcast = "BroadcastChannel" in window ? new BroadcastChannel("app-channel") : null;
 
 document.documentElement.dataset.theme = "dark";
@@ -297,6 +301,13 @@ function resetChunkRenderState() {
   chunkCursor = 0;
 }
 
+async function createChunkDecoder(payload, accessPhrase) {
+  if (!payloadCodec.createChunkDecoder) {
+    throw new Error("Decoding module unavailable.");
+  }
+  return payloadCodec.createChunkDecoder(payload, accessPhrase, FORMAT_VERSION);
+}
+
 async function appendMarkdownChunk(markdown) {
   const html = window.marked ? window.marked.parse(markdown) : renderMarkdownFallback(markdown);
   const sanitized = sanitizeHtml(html);
@@ -346,6 +357,7 @@ async function renderNextChunk() {
 async function renderMarkdown(payload, accessPhrase) {
   copyStatus.textContent = "";
   outputEl.innerHTML = "";
+  clearSearchResults();
   loadMoreBtn.hidden = true;
   resetInactivityTimer();
 
@@ -358,12 +370,9 @@ async function renderMarkdown(payload, accessPhrase) {
   resetChunkRenderState();
 
   try {
-    if (!payloadCodec.createChunkDecoder) {
-      throw new Error("Decoding module unavailable.");
-    }
     await ensureLibrariesLoaded();
     activePayload = payload;
-    chunkDecoder = await payloadCodec.createChunkDecoder(payload, accessPhrase, FORMAT_VERSION);
+    chunkDecoder = await createChunkDecoder(payload, accessPhrase);
     await renderNextChunk();
   } catch (error) {
     setStatus(`Render failed: ${error.message}`, true);
@@ -523,7 +532,7 @@ function updateCategoryOptions(entries) {
 }
 
 function getFilteredEntries(entries) {
-  const query = searchInput.value.trim();
+  const query = fileFilterInput.value.trim();
   return filterByCategory(filterEntries(entries, query));
 }
 
@@ -638,7 +647,7 @@ async function loadRepoFiles() {
 
   if (!navigator.onLine) {
     setStatus("Offline mode: unable to fetch GitHub repo list.", true);
-    renderFileGroups(filterEntries([...allRepoEntries, ...bundleEntries], searchInput.value.trim()));
+    renderFileGroups(getFilteredEntries([...allRepoEntries, ...bundleEntries]));
     return;
   }
 
@@ -853,6 +862,8 @@ function clearDeparsedContent(reason) {
   loadMoreBtn.hidden = true;
   historyList.innerHTML = "";
   updatePreview(null);
+  searchResultsList.innerHTML = "";
+  searchSummary.textContent = "";
   if (reason) {
     setStatus(reason);
   }
@@ -883,6 +894,84 @@ function updateInactivityTimeout() {
   resetInactivityTimer();
 }
 
+function clearSearchResults() {
+  searchResultsList.innerHTML = "";
+  searchSummary.textContent = "";
+}
+
+function buildSearchPreview(text, matchIndex, queryLength) {
+  const radius = 48;
+  const start = Math.max(0, matchIndex - radius);
+  const end = Math.min(text.length, matchIndex + queryLength + radius);
+  const prefix = start > 0 ? "…" : "";
+  const suffix = end < text.length ? "…" : "";
+  const snippet = text.slice(start, end).replace(/\s+/g, " ").trim();
+  return `${prefix}${snippet}${suffix}`;
+}
+
+function renderSearchResults(results, query) {
+  clearSearchResults();
+  if (!query) {
+    return;
+  }
+  if (!results.length) {
+    const item = document.createElement("li");
+    item.textContent = "No matches found.";
+    searchResultsList.appendChild(item);
+    return;
+  }
+
+  results.forEach((result) => {
+    const item = document.createElement("li");
+    item.className = "file-item";
+    const meta = document.createElement("div");
+    meta.className = "file-meta";
+    const title = document.createElement("strong");
+    title.textContent = `Chunk ${result.chunkIndex + 1} · ${result.matchCount} match${
+      result.matchCount === 1 ? "" : "es"
+    }`;
+    const subtitle = document.createElement("span");
+    subtitle.textContent = result.preview;
+    meta.appendChild(title);
+    meta.appendChild(subtitle);
+
+    const actions = document.createElement("div");
+    actions.className = "file-actions";
+    const openButton = document.createElement("button");
+    openButton.type = "button";
+    openButton.textContent = "Open";
+    openButton.addEventListener("click", () => renderChunkAtIndex(result.chunkIndex));
+    actions.appendChild(openButton);
+
+    item.appendChild(meta);
+    item.appendChild(actions);
+    searchResultsList.appendChild(item);
+  });
+}
+
+async function renderChunkAtIndex(index) {
+  if (!activePayload) {
+    setStatus("Load an encrypted file before opening a result.", true);
+    return;
+  }
+  const accessPhrase = getAccessPhraseForFile(currentFilePath);
+  if (!accessPhrase) {
+    setStatus("Enter a session code before opening a result.", true);
+    return;
+  }
+  setStatus("Loading search result chunk...");
+  try {
+    await ensureLibrariesLoaded();
+    chunkDecoder = await createChunkDecoder(activePayload, accessPhrase);
+    chunkCursor = Math.max(0, Math.min(index, activePayload.chunks.length - 1));
+    outputEl.innerHTML = "";
+    await renderNextChunk();
+    setStatus("Search result loaded.", false, true);
+  } catch (error) {
+    setStatus(`Failed to load search result: ${error.message}`, true);
+  }
+}
+
 function toggleTheme() {
   const root = document.documentElement;
   const isLight = root.dataset.theme === "light";
@@ -891,14 +980,58 @@ function toggleTheme() {
   themeToggle.setAttribute("aria-pressed", String(!isLight));
 }
 
+async function createPlaintextStream(payload, accessPhrase, onProgress) {
+  const decoder = await createChunkDecoder(payload, accessPhrase);
+  let index = 0;
+  return new ReadableStream({
+    async pull(controller) {
+      if (index >= payload.chunks.length) {
+        controller.close();
+        return;
+      }
+      const entry = payload.chunks[index];
+      let resultBytes = null;
+      try {
+        resultBytes = await decoder(entry, index);
+        const outputBytes = resultBytes.slice();
+        controller.enqueue(outputBytes);
+        if (onProgress) {
+          onProgress(index + 1, payload.chunks.length);
+        }
+      } catch (error) {
+        controller.error(error);
+        return;
+      } finally {
+        if (resultBytes) {
+          resultBytes.fill(0);
+        }
+        resultBytes = null;
+      }
+      index += 1;
+    },
+  });
+}
+
+async function buildPlaintextBlob(payload, accessPhrase, onProgress) {
+  const stream = await createPlaintextStream(payload, accessPhrase, onProgress);
+  const response = new Response(stream);
+  return response.blob();
+}
+
 async function copyDeparsedContent() {
-  const text = outputEl.textContent.trim();
-  if (!text) {
+  if (!activePayload) {
     copyStatus.textContent = "Nothing to copy yet.";
     return;
   }
+  const accessPhrase = getAccessPhraseForFile(currentFilePath);
+  if (!accessPhrase) {
+    copyStatus.textContent = "Enter a session code before copying.";
+    return;
+  }
   try {
-    await navigator.clipboard.writeText(text);
+    copyStatus.textContent = "Copying content...";
+    const blob = await buildPlaintextBlob(activePayload, accessPhrase);
+    await navigator.clipboard.write([new ClipboardItem({ "text/plain": blob })]);
     copyStatus.textContent = "Processed content copied.";
     showToast("Copied to clipboard");
   } catch (error) {
@@ -906,18 +1039,28 @@ async function copyDeparsedContent() {
   }
 }
 
-function exportText() {
-  const text = outputEl.textContent.trim();
-  if (!text) {
+async function exportText() {
+  if (!activePayload) {
     setStatus("Nothing to export yet.", true);
     return;
   }
-  const blob = new Blob([text], { type: "text/plain" });
-  const link = document.createElement("a");
-  link.href = URL.createObjectURL(blob);
-  link.download = `${currentFilePath || "processed-content"}.txt`;
-  link.click();
-  URL.revokeObjectURL(link.href);
+  const accessPhrase = getAccessPhraseForFile(currentFilePath);
+  if (!accessPhrase) {
+    setStatus("Enter a session code before exporting.", true);
+    return;
+  }
+  try {
+    setStatus("Preparing export...");
+    const blob = await buildPlaintextBlob(activePayload, accessPhrase);
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `${currentFilePath || "processed-content"}.txt`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+    setStatus("Export ready.", false, true);
+  } catch (error) {
+    setStatus(`Export failed: ${error.message}`, true);
+  }
 }
 
 function exportBundle() {
@@ -1035,9 +1178,81 @@ async function parseAndUpload() {
   }
 }
 
-function handleSearch() {
-  const combined = [...allRepoEntries, ...bundleEntries];
-  renderFileGroups(getFilteredEntries(combined));
+async function handleSearch() {
+  const query = searchInput.value.trim();
+  const runId = ++searchRunId;
+  clearSearchResults();
+  if (!query) {
+    searchSummary.textContent = "";
+    return;
+  }
+  if (!activePayload) {
+    searchSummary.textContent = "Load a file to search.";
+    return;
+  }
+  const accessPhrase = getAccessPhraseForFile(currentFilePath);
+  if (!accessPhrase) {
+    searchSummary.textContent = "Enter a session code to search.";
+    return;
+  }
+  searchSummary.textContent = "Scanning...";
+  const results = [];
+  const loweredQuery = query.toLowerCase();
+
+  try {
+    await payloadCodec.decodePayloadChunks(
+      activePayload,
+      accessPhrase,
+      FORMAT_VERSION,
+      async (bytes, index, total) => {
+        if (runId !== searchRunId) {
+          return;
+        }
+        let text = chunkTextDecoder.decode(bytes);
+        let lower = text.toLowerCase();
+        let offset = 0;
+        let matchCount = 0;
+        let firstMatch = -1;
+        const offsets = [];
+        while (true) {
+          const next = lower.indexOf(loweredQuery, offset);
+          if (next === -1) {
+            break;
+          }
+          if (firstMatch === -1) {
+            firstMatch = next;
+          }
+          if (offsets.length < 5) {
+            offsets.push(next);
+          }
+          matchCount += 1;
+          offset = next + loweredQuery.length;
+        }
+        if (matchCount > 0) {
+          results.push({
+            chunkIndex: index,
+            matchCount,
+            offsets,
+            preview: buildSearchPreview(text, firstMatch, loweredQuery.length),
+          });
+        }
+        searchSummary.textContent = `Scanning ${index + 1} of ${total}...`;
+        text = "";
+        lower = "";
+      }
+    );
+    if (runId !== searchRunId) {
+      return;
+    }
+    searchSummary.textContent = `Found ${results.length} matching chunk${results.length === 1 ? "" : "s"}.`;
+    renderSearchResults(results, query);
+  } catch (error) {
+    if (runId !== searchRunId) {
+      return;
+    }
+    searchSummary.textContent = "";
+    setStatus(`Search failed: ${error.message}`, true);
+  }
 }
 
 function registerShortcuts(event) {
@@ -1045,6 +1260,10 @@ function registerShortcuts(event) {
     return;
   }
   if (event.key === "f") {
+    fileFilterInput.focus();
+    event.preventDefault();
+  }
+  if (event.key === "s") {
     searchInput.focus();
     event.preventDefault();
   }
@@ -1073,7 +1292,12 @@ themeToggle.addEventListener("click", toggleTheme);
 copyOutputBtn.addEventListener("click", copyDeparsedContent);
 loadMoreBtn.addEventListener("click", renderNextChunk);
 searchInput.addEventListener("input", handleSearch);
-categoryFilter.addEventListener("change", handleSearch);
+categoryFilter.addEventListener("change", () => {
+  renderFileGroups(getFilteredEntries([...allRepoEntries, ...bundleEntries]));
+});
+fileFilterInput.addEventListener("input", () => {
+  renderFileGroups(getFilteredEntries([...allRepoEntries, ...bundleEntries]));
+});
 inactivityTimeoutInput.addEventListener("input", updateInactivityTimeout);
 exportTextBtn.addEventListener("click", exportText);
 exportBundleBtn.addEventListener("click", exportBundle);

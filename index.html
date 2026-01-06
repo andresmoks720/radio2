@@ -39,8 +39,16 @@
           </div>
 
           <div class="control-group">
-            <label for="search-input">Search de-parsed content</label>
-            <input id="search-input" type="search" placeholder="Search cached markdown" />
+            <label for="search-input">Search content</label>
+            <input id="search-input" type="search" placeholder="Search current file" />
+            <small class="helper-text">
+              Searches scan chunks on demand, keep short previews only, never store decrypted text, and do not use the network.
+            </small>
+          </div>
+
+          <div class="control-group">
+            <label for="file-filter">Filter files</label>
+            <input id="file-filter" type="search" placeholder="Filter file list" />
           </div>
 
           <div class="control-group">
@@ -140,6 +148,17 @@
           <span id="copy-status" class="copy-status" aria-live="polite"></span>
           <span id="perf-indicator" class="copy-status"></span>
         </div>
+        <section class="search-results">
+          <div class="section-header">
+            <h3>Search Results</h3>
+            <span id="search-summary" class="copy-status"></span>
+          </div>
+          <ul id="search-results" class="file-list"></ul>
+          <small class="helper-text">
+            Data lifetime: brief per-chunk plaintext for scanning and previews. Persistence: none in storage; clipboard/download on request.
+            Network: none during search, copy, or export.
+          </small>
+        </section>
         <div class="output-wrapper">
           <article id="output" class="markdown"></article>
         </div>
