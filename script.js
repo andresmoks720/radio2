@@ -1,8 +1,6 @@
 const statusEl = document.getElementById("status");
 const outputEl = document.getElementById("output");
 const accessPhraseInput = document.getElementById("access-phrase");
-const sampleSelect = document.getElementById("sample-select");
-const loadSampleBtn = document.getElementById("load-sample");
 const fileInput = document.getElementById("file-input");
 const loadFileBtn = document.getElementById("load-file");
 const repoOwnerInput = document.getElementById("repo-owner");
@@ -37,7 +35,6 @@ const parseFileInput = document.getElementById("parse-file");
 const parseMessageInput = document.getElementById("parse-message");
 const parseSaveBtn = document.getElementById("parse-save");
 
-const MANIFEST_URL = "docs/manifest.json";
 const FORMAT_VERSION = 2;
 const DEFAULT_INACTIVITY_MINUTES = 60;
 const DATA_EXTENSION = ".md.data";
@@ -773,11 +770,11 @@ async function handleRepoFileLoad(file) {
   }
 
   if (file.isParsed && !accessPhrase) {
-    setStatus("Enter a session code before de-parsing files.", true);
+    setStatus("Enter a session code before opening files.", true);
     return;
   }
 
-  setStatus("Loading payload...");
+  setStatus("Loading file...");
   setOutputState("");
   try {
     let payloadSize = file.size || 0;
@@ -812,62 +809,6 @@ async function handleRepoFileLoad(file) {
   }
 }
 
-async function loadSamples() {
-  try {
-    const response = await fetch(MANIFEST_URL, { cache: "no-store" });
-    if (!response.ok) {
-      throw new Error("Unable to fetch sample manifest.");
-    }
-    const manifest = await response.json();
-    sampleSelect.innerHTML = "<option value=\"\">Select a sample</option>";
-    manifest.samples.forEach((sample) => {
-      const option = document.createElement("option");
-      option.value = sample.path;
-      option.textContent = sample.label;
-      sampleSelect.appendChild(option);
-    });
-  } catch (error) {
-    sampleSelect.innerHTML = "<option value=\"\">No samples available</option>";
-    setStatus(error.message, true);
-  }
-}
-
-async function handleSampleLoad() {
-  const path = sampleSelect.value;
-  const accessPhrase = accessPhraseInput.value.trim();
-
-  if (!path) {
-    setStatus("Please choose a sample file.", true);
-    return;
-  }
-
-  if (!accessPhrase) {
-    setStatus("Enter a session code before de-parsing.", true);
-    return;
-  }
-
-  setStatus("De-parsing sample...");
-  setOutputState("");
-
-  try {
-    const response = await fetch(path, { cache: "no-store" });
-    const payload = await response.json();
-    assertPayloadFormat(payload);
-    parsedCache.set(path, payload);
-    currentFilePath = path;
-    await renderMarkdown(payload, accessPhrase);
-    setStatus("Sample processed successfully.", false, true);
-    setOutputState("success");
-    updateHistory(path, JSON.stringify(payload).length);
-    updatePreview({ name: path.split("/").pop(), path, isParsed: true, size: JSON.stringify(payload).length });
-    if (broadcast) {
-      broadcast.postMessage({ type: "content", file: path });
-    }
-  } catch (error) {
-    setStatus(`Failed to process sample: ${error.message}`, true);
-    setOutputState("error");
-  }
-}
 
 async function handleFileLoad() {
   const file = fileInput.files[0];
@@ -879,11 +820,11 @@ async function handleFileLoad() {
   }
 
   if (!accessPhrase) {
-    setStatus("Enter a session code before de-parsing.", true);
+    setStatus("Enter a session code before opening.", true);
     return;
   }
 
-  setStatus("De-parsing local file...");
+  setStatus("Loading local file...");
   setOutputState("");
 
   try {
@@ -1127,27 +1068,33 @@ async function tryClipboardWrite(text) {
   }
 }
 
+function getSelectedOutputText() {
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed) {
+    return "";
+  }
+  const range = selection.rangeCount ? selection.getRangeAt(0) : null;
+  if (!range || !outputEl.contains(range.commonAncestorContainer)) {
+    return "";
+  }
+  return selection.toString();
+}
+
 async function copyDeparsedContent() {
-  if (!activePayload) {
-    copyStatus.textContent = "Nothing to copy yet.";
+  const selectedText = getSelectedOutputText();
+  if (!selectedText) {
+    copyStatus.textContent = "Select text in the preview to copy.";
     return;
   }
-  const accessPhrase = getAccessPhrase();
-  if (!accessPhrase) {
-    copyStatus.textContent = "Enter a session code before copying.";
-    return;
-  }
-  copyStatus.textContent = "Copying content...";
-  let text = "";
+  copyStatus.textContent = "Copying selection...";
   try {
-    text = await buildPlaintextText(activePayload, accessPhrase);
-    const result = await tryClipboardWrite(text);
+    const result = await tryClipboardWrite(selectedText);
     if (result.ok) {
       copyStatus.textContent = "Copied to clipboard.";
       showToast("Copied to clipboard");
       return;
     }
-    const ok = await fallbackExecCommandCopy(text);
+    const ok = await fallbackExecCommandCopy(selectedText);
     if (ok) {
       const detail =
         result.reason && result.reason !== "unavailable"
@@ -1165,8 +1112,6 @@ async function copyDeparsedContent() {
   } catch (error) {
     const name = error?.name || "error";
     copyStatus.textContent = `Copy blocked (${name}). Try: use the Copy button, keep the tab focused, allow clipboard access in site settings, avoid embedded frames or guest mode.`;
-  } finally {
-    text = "";
   }
 }
 
@@ -1454,7 +1399,6 @@ function registerShortcuts(event) {
   }
 }
 
-loadSampleBtn.addEventListener("click", handleSampleLoad);
 loadFileBtn.addEventListener("click", handleFileLoad);
 loadRepoBtn.addEventListener("click", loadRepoFiles);
 themeToggle.addEventListener("click", toggleTheme);
@@ -1505,4 +1449,3 @@ if (broadcast) {
 }
 
 updateInactivityTimeout();
-loadSamples();
