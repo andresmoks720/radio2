@@ -42,7 +42,7 @@ const FORMAT_VERSION = 2;
 const DEFAULT_INACTIVITY_MINUTES = 60;
 const DATA_EXTENSION = ".md.data";
 const MARKDOWN_CHUNK_TARGET = 2000;
-const AUTO_LOAD_THRESHOLD_PX = 240;
+const AUTO_LOAD_ROOT_MARGIN = "240px";
 const LIBRARIES = {
   marked: "vendor/marked.min.js",
   dompurify: "vendor/purify.min.js",
@@ -67,7 +67,7 @@ let chunkDecoder = null;
 let chunkCursor = 0;
 let searchRunId = 0;
 let isChunkLoading = false;
-let autoLoadScheduled = false;
+let autoLoadObserver = null;
 const broadcast = "BroadcastChannel" in window ? new BroadcastChannel("app-channel") : null;
 
 document.documentElement.dataset.theme = "dark";
@@ -327,6 +327,7 @@ async function appendMarkdownChunk(markdown) {
 async function renderNextChunk() {
   if (!activePayload || !chunkDecoder || chunkCursor >= activePayload.chunks.length || isChunkLoading) {
     loadMoreBtn.hidden = true;
+    updateAutoLoadObserver();
     return;
   }
 
@@ -355,31 +356,32 @@ async function renderNextChunk() {
   perfIndicator.textContent = `Render: ${duration}ms`;
   loadMoreBtn.hidden = chunkCursor >= activePayload.chunks.length;
   if (!loadMoreBtn.hidden) {
-    setStatus("Scroll to load more.");
+    setStatus("More content will load near the end of the page.");
   }
-  autoLoadNextChunkIfNeeded();
+  updateAutoLoadObserver();
 }
 
-function autoLoadNextChunkIfNeeded() {
-  if (!activePayload || !chunkDecoder || isChunkLoading || chunkCursor >= activePayload.chunks.length) {
+function updateAutoLoadObserver() {
+  if (!("IntersectionObserver" in window)) {
     return;
   }
-  const scrollPosition = window.scrollY + window.innerHeight;
-  const maxScroll = document.documentElement.scrollHeight - AUTO_LOAD_THRESHOLD_PX;
-  if (scrollPosition >= maxScroll) {
-    renderNextChunk();
+  if (!autoLoadObserver) {
+    autoLoadObserver = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            renderNextChunk();
+          }
+        });
+      },
+      { root: null, rootMargin: AUTO_LOAD_ROOT_MARGIN, threshold: 0.1 }
+    );
   }
-}
-
-function scheduleAutoLoad() {
-  if (autoLoadScheduled) {
-    return;
+  if (loadMoreBtn.hidden) {
+    autoLoadObserver.unobserve(loadMoreBtn);
+  } else {
+    autoLoadObserver.observe(loadMoreBtn);
   }
-  autoLoadScheduled = true;
-  window.requestAnimationFrame(() => {
-    autoLoadScheduled = false;
-    autoLoadNextChunkIfNeeded();
-  });
 }
 
 async function renderMarkdown(payload, accessPhrase) {
@@ -1431,9 +1433,6 @@ parseSaveBtn.addEventListener("click", parseAndSave);
 outputEl.addEventListener("contextmenu", (event) => event.preventDefault());
 
 document.addEventListener("keydown", registerShortcuts);
-window.addEventListener("scroll", scheduleAutoLoad, { passive: true });
-window.addEventListener("resize", scheduleAutoLoad);
-
 ["click", "keydown", "mousemove", "scroll", "touchstart"].forEach((eventName) => {
   document.addEventListener(eventName, resetInactivityTimer, { passive: true });
 });
