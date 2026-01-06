@@ -1,9 +1,0 @@
-{
-  "name": "encrypted-markdown-reader",
-  "version": "1.0.0",
-  "description": "Client-side markdown reader with encryption",
-  "license": "MIT",
-  "scripts": {
-    "test": "node tests/run-tests.mjs"
-  }
-}

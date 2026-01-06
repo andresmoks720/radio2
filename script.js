@@ -22,12 +22,10 @@ const passphraseFeedback = document.getElementById("passphrase-feedback");
 const searchInput = document.getElementById("search-input");
 const categoryFilter = document.getElementById("category-filter");
 const exportTextBtn = document.getElementById("export-text");
-const exportPdfBtn = document.getElementById("export-pdf");
 const exportBundleBtn = document.getElementById("export-bundle");
 const importBundleInput = document.getElementById("import-bundle");
 const perfIndicator = document.getElementById("perf-indicator");
 const historyList = document.getElementById("history-list");
-const analyticsSummary = document.getElementById("analytics-summary");
 const toast = document.getElementById("toast");
 const previewMeta = document.getElementById("preview-meta");
 const encryptTitleInput = document.getElementById("encrypt-title");
@@ -55,12 +53,6 @@ const decryptedCache = new Map();
 const encryptedCache = new Map();
 const passphraseStore = new Map();
 const historyStore = new Map();
-const analytics = {
-  decrypts: 0,
-  exports: 0,
-  searches: 0,
-  loads: 0,
-};
 
 let hasDecryptedContent = false;
 let inactivityTimer = null;
@@ -85,10 +77,6 @@ function setOutputState(state) {
   if (state) {
     outputEl.classList.add(state);
   }
-}
-
-function updateAnalytics() {
-  analyticsSummary.textContent = `Analytics: ${analytics.decrypts} decrypts · ${analytics.loads} loads · ${analytics.exports} exports`;
 }
 
 function showToast(message) {
@@ -661,9 +649,6 @@ async function handleRepoFileLoad(file) {
     return;
   }
 
-  analytics.loads += 1;
-  updateAnalytics();
-
   if (decryptedCache.has(file.path)) {
     currentFilePath = file.path;
     await renderMarkdown(decryptedCache.get(file.path));
@@ -684,14 +669,12 @@ async function handleRepoFileLoad(file) {
         throw new Error(`Missing bundle payload for ${file.path}.`);
       }
       markdown = await decryptPayload(payload, getPassphraseForFile(file.path, password));
-      analytics.decrypts += 1;
     } else {
       const response = await fetchRawFile(owner, repo, branch, file.path, token);
       if (file.encrypted) {
         const payload = await response.json();
         encryptedCache.set(file.path, payload);
         markdown = await decryptPayload(payload, getPassphraseForFile(file.path, password));
-        analytics.decrypts += 1;
       } else {
         markdown = await response.text();
       }
@@ -703,7 +686,6 @@ async function handleRepoFileLoad(file) {
     setOutputState("success");
     updateHistory(file.path, markdown);
     renderFileGroups(getFilteredEntries([...allRepoEntries, ...bundleEntries]));
-    updateAnalytics();
     updatePreview(file);
     if (broadcast) {
       broadcast.postMessage({ type: "decrypted", file: file.path });
@@ -764,8 +746,6 @@ async function handleSampleLoad() {
     setOutputState("success");
     updateHistory(path, markdown);
     updatePreview({ name: path.split("/").pop(), path, encrypted: true, size: JSON.stringify(payload).length });
-    analytics.decrypts += 1;
-    updateAnalytics();
     if (broadcast) {
       broadcast.postMessage({ type: "decrypted", file: path });
     }
@@ -805,8 +785,6 @@ async function handleFileLoad() {
     setOutputState("success");
     updateHistory(file.name, markdown);
     updatePreview({ name: file.name, path: file.name, encrypted: true, size: file.size });
-    analytics.decrypts += 1;
-    updateAnalytics();
     if (broadcast) {
       broadcast.postMessage({ type: "decrypted", file: file.name });
     }
@@ -906,31 +884,6 @@ function exportText() {
   link.download = `${currentFilePath || "decrypted"}.txt`;
   link.click();
   URL.revokeObjectURL(link.href);
-  analytics.exports += 1;
-  updateAnalytics();
-}
-
-async function exportPdf() {
-  if (!currentMarkdown.trim()) {
-    setStatus("Nothing to export yet.", true);
-    return;
-  }
-  await ensureLibrariesLoaded();
-  const printWindow = window.open("", "_blank");
-  if (!printWindow) {
-    setStatus("Pop-up blocked. Allow pop-ups to export PDF.", true);
-    return;
-  }
-  const rawHtml = window.marked
-    ? window.marked.parse(currentMarkdown)
-    : escapeHtml(currentMarkdown).replaceAll("\n", "<br />");
-  const safeHtml = sanitizeHtml(rawHtml);
-  printWindow.document.write(`<!DOCTYPE html><html><head><title>Export</title></head><body>${safeHtml}</body></html>`);
-  printWindow.document.close();
-  printWindow.focus();
-  printWindow.print();
-  analytics.exports += 1;
-  updateAnalytics();
 }
 
 function exportBundle() {
@@ -949,8 +902,6 @@ function exportBundle() {
   link.download = "encrypted-bundle.json";
   link.click();
   URL.revokeObjectURL(link.href);
-  analytics.exports += 1;
-  updateAnalytics();
 }
 
 async function importBundle() {
@@ -1052,8 +1003,6 @@ async function encryptAndUpload() {
 }
 
 function handleSearch() {
-  analytics.searches += 1;
-  updateAnalytics();
   const combined = [...allRepoEntries, ...bundleEntries];
   renderFileGroups(getFilteredEntries(combined));
 }
@@ -1105,7 +1054,6 @@ passwordInput.addEventListener("input", updatePassphraseStrength);
 searchInput.addEventListener("input", handleSearch);
 categoryFilter.addEventListener("change", handleSearch);
 exportTextBtn.addEventListener("click", exportText);
-exportPdfBtn.addEventListener("click", exportPdf);
 exportBundleBtn.addEventListener("click", exportBundle);
 importBundleInput.addEventListener("change", importBundle);
 encryptUploadBtn.addEventListener("click", encryptAndUpload);
@@ -1133,7 +1081,6 @@ if (broadcast) {
 }
 
 updatePassphraseStrength();
-updateAnalytics();
 resetInactivityTimer();
 setupServiceWorker();
 loadSamples();

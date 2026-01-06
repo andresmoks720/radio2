@@ -10,15 +10,7 @@
     http-equiv="Content-Security-Policy"
     content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' https://cdn.jsdelivr.net; img-src 'self' data:; connect-src 'self' https://api.github.com https://raw.githubusercontent.com; object-src 'none'; base-uri 'none'; form-action 'none'"
   />
-  <meta property="og:title" content="Encrypted Markdown Reader" />
-  <meta
-    property="og:description"
-    content="Client-side markdown decryption with AES-GCM, GitHub docs browser, and offline-friendly design."
-  />
-  <meta property="og:type" content="website" />
-  <meta property="og:url" content="https://your-domain.example" />
-  <meta property="og:image" content="https://your-domain.example/preview.png" />
-  <title>Encrypted Markdown Reader</title>
+  <title>Markdown Viewer</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -149,7 +141,6 @@
         <div class="content-actions">
           <button id="copy-output" type="button">Copy decrypted text</button>
           <button id="export-text" type="button">Export text</button>
-          <button id="export-pdf" type="button">Export PDF</button>
           <span id="copy-status" class="copy-status" aria-live="polite"></span>
           <span id="perf-indicator" class="copy-status"></span>
         </div>
@@ -168,7 +159,6 @@
 
     <footer>
       <p>Built for GitHub Pages. All processing happens locally in your browser.</p>
-      <p id="analytics-summary">Analytics: 0 decrypts · 0 loads · 0 exports</p>
     </footer>
   </div>
 

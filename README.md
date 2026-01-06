@@ -7,9 +7,8 @@ A client-side markdown reader that decrypts encrypted markdown files directly in
 - GitHub `docs/` browser with folder grouping and search
 - Passphrase strength meter and multi-passphrase support per file
 - Optional GitHub token support for private repos and uploads
-- Client-side only analytics counters (no network tracking)
 - Lazy-loaded markdown rendering with sanitization and syntax highlighting
-- Export decrypted content to text or PDF and bundle encrypted payloads
+- Export decrypted content to text and bundle encrypted payloads
 - Offline support via Service Worker
 - Keyboard shortcuts for common actions (`f`, `p`, `t`, `c`, `l`, `m`)
 
@@ -21,10 +20,8 @@ A client-side markdown reader that decrypts encrypted markdown files directly in
 5. Select a sample file and click **Load Sample**.
 
 ### GitHub Pages
-This repo is ready to deploy on GitHub Pages. The included `CNAME` file supports a custom domain. Update `CNAME`, the Open Graph metadata in `index.html`, and the sitemap/robots URLs to match your domain before deployment.
+This repo is ready to deploy on GitHub Pages. If you want it hidden from indexing, keep the `robots.txt` disallow rule and avoid publishing a sitemap.
 
-### Scripts
-- `npm test` runs the encryption/decryption test suite.
 
 ## Security Disclaimer
 This app runs entirely in the browser. Client-side encryption protects content in transit and at rest **only** if your passphrase remains secure. Anyone with access to the decrypted content in the browser session can read it. Always:
@@ -55,7 +52,7 @@ This app runs entirely in the browser. Client-side encryption protects content i
 - **Multiple passphrases:** stored in memory per file during the session.
 - **Search:** filters file list using cached decrypted content.
 - **Category filtering:** group and filter docs/ subfolders.
-- **Export:** download decrypted content as text or print to PDF.
+- **Export:** download decrypted content as text.
 - **Encrypted bundles:** import/export encrypted JSON bundles for offline sharing.
 - **Version history:** timestamps of recently viewed files.
 - **Encrypt & upload:** create encrypted files and push to GitHub with a token.
@@ -77,11 +74,4 @@ Decrypted content is cleared. A warning appears if you try to leave with decrypt
 
 ## Limitations
 - Client-side encryption cannot protect against compromised devices or browsers.
-- PDF export uses the browser print dialog and may vary by browser.
 - Large files rely on lazy rendering, but very large payloads may still impact memory.
-
-## Development
-See [CONTRIBUTING.md](CONTRIBUTING.md) for workflow details. The code of conduct is in [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
-
-## License
-MIT (see [LICENSE](LICENSE)).
