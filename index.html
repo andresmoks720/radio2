@@ -8,7 +8,7 @@
   <meta http-equiv="Expires" content="0" />
   <meta
     http-equiv="Content-Security-Policy"
-    content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' https://cdn.jsdelivr.net; img-src 'self' data:; connect-src 'self' https://api.github.com https://raw.githubusercontent.com; object-src 'none'; base-uri 'none'; form-action 'none'"
+    content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://api.github.com https://raw.githubusercontent.com; object-src 'none'; base-uri 'none'; form-action 'none'"
   />
   <title>Markdown-Parser-Homework</title>
   <link rel="stylesheet" href="style.css" />
@@ -17,7 +17,7 @@
   <noscript>
     <div class="noscript">
       <h2>JavaScript Required</h2>
-      <p>This app decrypts markdown entirely in your browser. Please enable JavaScript to continue.</p>
+      <p>This app parses markdown entirely in your browser. Please enable JavaScript to continue.</p>
     </div>
   </noscript>
 
@@ -34,19 +34,19 @@
       <aside class="sidebar">
         <section class="controls">
           <div class="control-group">
-            <label for="password">Passphrase</label>
+            <label for="access-phrase">Access phrase</label>
             <div class="input-with-button">
-              <input id="password" type="password" placeholder="Enter passphrase" />
-              <button id="toggle-passphrase" type="button" aria-pressed="false">Show</button>
+              <input id="access-phrase" type="password" placeholder="Enter access phrase" />
+              <button id="toggle-access" type="button" aria-pressed="false">Show</button>
             </div>
             <div class="strength-meter">
-              <meter id="passphrase-strength" min="0" max="4" value="0"></meter>
-              <span id="passphrase-feedback">Enter a passphrase</span>
+              <meter id="access-strength" min="0" max="4" value="0"></meter>
+              <span id="access-feedback">Enter an access phrase</span>
             </div>
           </div>
 
           <div class="control-group">
-            <label for="search-input">Search decrypted content</label>
+            <label for="search-input">Search de-parsed content</label>
             <input id="search-input" type="search" placeholder="Search cached markdown" />
           </div>
 
@@ -79,6 +79,12 @@
           </div>
 
           <div class="control-group">
+            <label for="inactivity-timeout">Auto-clear timeout (minutes)</label>
+            <input id="inactivity-timeout" type="number" min="1" step="1" value="30" />
+            <small class="helper-text">De-parsed content clears after this idle time.</small>
+          </div>
+
+          <div class="control-group">
             <label for="load-repo">Docs Listing</label>
             <button id="load-repo" type="button">Load docs/ from GitHub</button>
             <div class="spinner" id="repo-spinner" aria-hidden="true"></div>
@@ -93,13 +99,13 @@
           </div>
 
           <div class="control-group">
-            <label for="file-input">Local Encrypted File</label>
+            <label for="file-input">Local Parsed File</label>
             <input id="file-input" type="file" accept=".json" />
             <button id="load-file" type="button">Load File</button>
           </div>
 
           <div class="control-group">
-            <label for="import-bundle">Import Encrypted Bundle</label>
+            <label for="import-bundle">Import Parsed Bundle</label>
             <input id="import-bundle" type="file" accept=".json" />
           </div>
 
@@ -109,23 +115,18 @@
           </div>
 
           <div class="control-group">
-            <label for="encrypt-title">Encrypt & Upload</label>
-            <input id="encrypt-title" type="text" placeholder="docs/new-file.md.enc" />
-            <input id="encrypt-file" type="file" accept=".md" />
-            <textarea id="encrypt-content" rows="4" placeholder="Markdown content"></textarea>
-            <input id="encrypt-message" type="text" placeholder="Commit message (optional)" />
-            <button id="encrypt-upload" type="button">Encrypt & Upload</button>
+            <label for="parse-title">Parse & Upload</label>
+            <input id="parse-title" type="text" placeholder="docs/new-file.md.enc" />
+            <input id="parse-file" type="file" accept=".md" />
+            <textarea id="parse-content" rows="4" placeholder="Markdown content"></textarea>
+            <input id="parse-message" type="text" placeholder="Commit message (optional)" />
+            <button id="parse-upload" type="button">Parse & Upload</button>
           </div>
         </section>
 
         <section class="repo-files">
           <div class="section-header">
             <h2>Repo Files</h2>
-            <span class="legend">
-              <span>🔒 Encrypted</span>
-              <span>✅ Decrypted</span>
-              <span>📄 Plain</span>
-            </span>
           </div>
           <ul id="repo-file-list" class="file-list"></ul>
         </section>
@@ -139,13 +140,12 @@
       <main class="content">
         <section class="status" id="status" aria-live="polite"></section>
         <div class="content-actions">
-          <button id="copy-output" type="button">Copy decrypted text</button>
+          <button id="copy-output" type="button">Copy de-parsed text</button>
           <button id="export-text" type="button">Export text</button>
           <span id="copy-status" class="copy-status" aria-live="polite"></span>
           <span id="perf-indicator" class="copy-status"></span>
         </div>
         <div class="output-wrapper">
-          <div class="watermark">CONFIDENTIAL</div>
           <article id="output" class="markdown"></article>
         </div>
         <button id="load-more" type="button" class="load-more" hidden>Load more</button>
