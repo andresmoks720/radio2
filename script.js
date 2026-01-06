@@ -35,10 +35,11 @@ const parseContentInput = document.getElementById("parse-content");
 const parseUploadBtn = document.getElementById("parse-upload");
 const parseFileInput = document.getElementById("parse-file");
 const parseMessageInput = document.getElementById("parse-message");
+const parseSaveBtn = document.getElementById("parse-save");
 
 const MANIFEST_URL = "docs/manifest.json";
 const FORMAT_VERSION = 2;
-const DEFAULT_INACTIVITY_MINUTES = 30;
+const DEFAULT_INACTIVITY_MINUTES = 60;
 const DATA_EXTENSION = ".md.data";
 const MARKDOWN_CHUNK_TARGET = 2000;
 const LIBRARIES = {
@@ -49,7 +50,6 @@ const LIBRARIES = {
 };
 
 const parsedCache = new Map();
-const accessPhraseStore = new Map();
 const historyStore = new Map();
 const payloadCodec = window.payloadCodec || {};
 
@@ -687,12 +687,8 @@ function renderHistory(entries) {
   });
 }
 
-function getAccessPhraseForFile(path, provided) {
-  if (provided) {
-    accessPhraseStore.set(path, provided);
-    return provided;
-  }
-  return accessPhraseStore.get(path) || "";
+function getAccessPhrase() {
+  return accessPhraseInput.value.trim();
 }
 
 async function handleRepoFileLoad(file) {
@@ -715,7 +711,7 @@ async function handleRepoFileLoad(file) {
     return;
   }
 
-  if (file.isParsed && !getAccessPhraseForFile(file.path, accessPhrase)) {
+  if (file.isParsed && !accessPhrase) {
     setStatus("Enter a session code before de-parsing files.", true);
     return;
   }
@@ -740,7 +736,7 @@ async function handleRepoFileLoad(file) {
       payloadSize = JSON.stringify(payload).length;
     }
     currentFilePath = file.path;
-    await renderMarkdown(payload, getAccessPhraseForFile(file.path, accessPhrase));
+    await renderMarkdown(payload, accessPhrase);
     setStatus("File loaded successfully.", false, true);
     setOutputState("success");
     updateHistory(file.path, payloadSize);
@@ -798,7 +794,7 @@ async function handleSampleLoad() {
     assertPayloadFormat(payload);
     parsedCache.set(path, payload);
     currentFilePath = path;
-    await renderMarkdown(payload, getAccessPhraseForFile(path, accessPhrase));
+    await renderMarkdown(payload, accessPhrase);
     setStatus("Sample processed successfully.", false, true);
     setOutputState("success");
     updateHistory(path, JSON.stringify(payload).length);
@@ -835,7 +831,7 @@ async function handleFileLoad() {
     assertPayloadFormat(payload);
     parsedCache.set(file.name, payload);
     currentFilePath = file.name;
-    await renderMarkdown(payload, getAccessPhraseForFile(file.name, accessPhrase));
+    await renderMarkdown(payload, accessPhrase);
     setStatus("Local file processed successfully.", false, true);
     setOutputState("success");
     updateHistory(file.name, file.size);
@@ -854,7 +850,6 @@ function clearDeparsedContent(reason) {
   currentFilePath = "";
   hasDeparsedContent = false;
   parsedCache.clear();
-  accessPhraseStore.clear();
   historyStore.clear();
   resetChunkRenderState();
   setOutputState("");
@@ -954,7 +949,7 @@ async function renderChunkAtIndex(index) {
     setStatus("Load a parsed file before opening a result.", true);
     return;
   }
-  const accessPhrase = getAccessPhraseForFile(currentFilePath);
+  const accessPhrase = getAccessPhrase();
   if (!accessPhrase) {
     setStatus("Enter a session code before opening a result.", true);
     return;
@@ -1023,7 +1018,7 @@ async function copyDeparsedContent() {
     copyStatus.textContent = "Nothing to copy yet.";
     return;
   }
-  const accessPhrase = getAccessPhraseForFile(currentFilePath);
+  const accessPhrase = getAccessPhrase();
   if (!accessPhrase) {
     copyStatus.textContent = "Enter a session code before copying.";
     return;
@@ -1044,7 +1039,7 @@ async function exportText() {
     setStatus("Nothing to export yet.", true);
     return;
   }
-  const accessPhrase = getAccessPhraseForFile(currentFilePath);
+  const accessPhrase = getAccessPhrase();
   if (!accessPhrase) {
     setStatus("Enter a session code before exporting.", true);
     return;
@@ -1178,6 +1173,44 @@ async function parseAndUpload() {
   }
 }
 
+function triggerDownload(blob, filename) {
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
+async function parseAndSave() {
+  const targetPath = ensurePayloadExtension(parseTitleInput.value.trim() || "local.md.data");
+  const accessPhrase = getAccessPhrase();
+
+  if (!accessPhrase) {
+    setStatus("Provide a session code and markdown content.", true);
+    return;
+  }
+
+  setStatus("Parsing for local save...");
+  try {
+    let markdown = parseContentInput.value.trim();
+    if (parseFileInput.files.length > 0) {
+      markdown = await parseFileInput.files[0].text();
+    }
+    if (!markdown) {
+      setStatus("Provide a session code and markdown content.", true);
+      return;
+    }
+    const payload = await encodeContent(markdown, accessPhrase);
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    triggerDownload(blob, targetPath);
+    parseContentInput.value = "";
+    parseFileInput.value = "";
+    setStatus("Local file ready.", false, true);
+  } catch (error) {
+    setStatus(`Local save failed: ${error.message}`, true);
+  }
+}
+
 async function handleSearch() {
   const query = searchInput.value.trim();
   const runId = ++searchRunId;
@@ -1190,7 +1223,7 @@ async function handleSearch() {
     searchSummary.textContent = "Load a file to search.";
     return;
   }
-  const accessPhrase = getAccessPhraseForFile(currentFilePath);
+  const accessPhrase = getAccessPhrase();
   if (!accessPhrase) {
     searchSummary.textContent = "Enter a session code to search.";
     return;
@@ -1303,6 +1336,7 @@ exportTextBtn.addEventListener("click", exportText);
 exportBundleBtn.addEventListener("click", exportBundle);
 importBundleInput.addEventListener("change", importBundle);
 parseUploadBtn.addEventListener("click", parseAndUpload);
+parseSaveBtn.addEventListener("click", parseAndSave);
 outputEl.addEventListener("contextmenu", (event) => event.preventDefault());
 
 document.addEventListener("keydown", registerShortcuts);

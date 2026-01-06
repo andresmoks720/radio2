@@ -35,7 +35,8 @@
         <section class="controls">
           <div class="control-group">
             <label for="access-phrase">Session code</label>
-            <input id="access-phrase" type="text" placeholder="Enter session code" />
+            <input id="access-phrase" type="password" placeholder="Enter session code" />
+            <small class="helper-text">Shown as *** and kept until you clear it.</small>
           </div>
 
           <div class="control-group">
@@ -81,7 +82,7 @@
 
           <div class="control-group">
             <label for="inactivity-timeout">Auto-clear timeout (minutes)</label>
-            <input id="inactivity-timeout" type="number" min="1" step="1" value="30" />
+            <input id="inactivity-timeout" type="number" min="1" step="1" value="60" />
             <small class="helper-text">De-parsed content clears after this idle time.</small>
           </div>
 
@@ -118,12 +119,17 @@
           </div>
 
           <div class="control-group">
-            <label for="parse-title">Upload parsed payload (.md.data)</label>
+            <label for="parse-title">Create parsed payload (.md.data)</label>
             <input id="parse-title" type="text" placeholder="docs/new-file.md.data" />
-            <input id="parse-file" type="file" accept=".md" />
+            <input id="parse-file" type="file" accept=".md,.markdown,text/markdown" />
             <textarea id="parse-content" rows="4" placeholder="Markdown content"></textarea>
             <input id="parse-message" type="text" placeholder="Commit message (optional)" />
             <button id="parse-upload" type="button">Parse & Upload</button>
+            <button id="parse-save" type="button">Parse & Save</button>
+            <small class="helper-text">
+              Data lifetime: source text stays only while generating the payload. Persistence: download saves locally on request.
+              Network: upload only when you click Parse & Upload.
+            </small>
           </div>
         </section>
 
