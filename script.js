@@ -42,6 +42,7 @@ const FORMAT_VERSION = 2;
 const DEFAULT_INACTIVITY_MINUTES = 60;
 const DATA_EXTENSION = ".md.data";
 const MARKDOWN_CHUNK_TARGET = 2000;
+const AUTO_LOAD_ROOT_MARGIN = "240px";
 const AUTO_LOAD_THRESHOLD_PX = 240;
 const LIBRARIES = {
   marked: "vendor/marked.min.js",
@@ -67,7 +68,9 @@ let chunkDecoder = null;
 let chunkCursor = 0;
 let searchRunId = 0;
 let isChunkLoading = false;
+let autoLoadObserver = null;
 let autoLoadScheduled = false;
+let autoLoadFallbackBound = false;
 const broadcast = "BroadcastChannel" in window ? new BroadcastChannel("app-channel") : null;
 
 document.documentElement.dataset.theme = "dark";
@@ -327,6 +330,7 @@ async function appendMarkdownChunk(markdown) {
 async function renderNextChunk() {
   if (!activePayload || !chunkDecoder || chunkCursor >= activePayload.chunks.length || isChunkLoading) {
     loadMoreBtn.hidden = true;
+    updateAutoLoadObserver();
     return;
   }
 
@@ -355,9 +359,9 @@ async function renderNextChunk() {
   perfIndicator.textContent = `Render: ${duration}ms`;
   loadMoreBtn.hidden = chunkCursor >= activePayload.chunks.length;
   if (!loadMoreBtn.hidden) {
-    setStatus("Scroll to load more.");
+    setStatus("More content will load near the end of the page.");
   }
-  autoLoadNextChunkIfNeeded();
+  updateAutoLoadObserver();
 }
 
 function autoLoadNextChunkIfNeeded() {
@@ -380,6 +384,35 @@ function scheduleAutoLoad() {
     autoLoadScheduled = false;
     autoLoadNextChunkIfNeeded();
   });
+}
+
+function updateAutoLoadObserver() {
+  if (!("IntersectionObserver" in window)) {
+    if (!autoLoadFallbackBound) {
+      window.addEventListener("scroll", scheduleAutoLoad, { passive: true });
+      window.addEventListener("resize", scheduleAutoLoad);
+      autoLoadFallbackBound = true;
+    }
+    scheduleAutoLoad();
+    return;
+  }
+  if (!autoLoadObserver) {
+    autoLoadObserver = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            renderNextChunk();
+          }
+        });
+      },
+      { root: null, rootMargin: AUTO_LOAD_ROOT_MARGIN, threshold: 0.1 }
+    );
+  }
+  if (loadMoreBtn.hidden) {
+    autoLoadObserver.unobserve(loadMoreBtn);
+  } else {
+    autoLoadObserver.observe(loadMoreBtn);
+  }
 }
 
 async function renderMarkdown(payload, accessPhrase) {
@@ -1052,9 +1085,11 @@ async function fallbackExecCommandCopy(text) {
   ta.value = text;
   ta.setAttribute("readonly", "");
   ta.style.position = "fixed";
-  ta.style.top = "-1000px";
+  ta.style.left = "-9999px";
+  ta.style.top = "0";
   ta.style.opacity = "0";
   document.body.appendChild(ta);
+  ta.focus();
   ta.select();
   ta.setSelectionRange(0, ta.value.length);
 
@@ -1080,6 +1115,18 @@ function isClipboardContextAllowed() {
   );
 }
 
+async function tryClipboardWrite(text) {
+  if (!isClipboardContextAllowed() || !navigator.clipboard?.writeText) {
+    return { ok: false, reason: "unavailable" };
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, reason: error?.name || "error" };
+  }
+}
+
 async function copyDeparsedContent() {
   if (!activePayload) {
     copyStatus.textContent = "Nothing to copy yet.";
@@ -1091,37 +1138,27 @@ async function copyDeparsedContent() {
     return;
   }
   copyStatus.textContent = "Copying content...";
-  const writeWithAsyncClipboard = async () => {
-    const blob = await buildPlaintextBlob(activePayload, accessPhrase);
-    await navigator.clipboard.write([new ClipboardItem({ "text/plain": blob })]);
-  };
+  let text = "";
   try {
-    if (!navigator.clipboard?.write) {
-      throw new Error("ClipboardWriteUnavailable");
+    text = await buildPlaintextText(activePayload, accessPhrase);
+    const result = await tryClipboardWrite(text);
+    if (result.ok) {
+      copyStatus.textContent = "Copied to clipboard.";
+      showToast("Copied to clipboard");
+      return;
     }
-    if (!isClipboardContextAllowed()) {
-      throw new Error("ClipboardContextBlocked");
+    const ok = await fallbackExecCommandCopy(text);
+    if (ok) {
+      copyStatus.textContent = "Copied (fallback mode).";
+      showToast("Copied to clipboard");
+    } else {
+      copyStatus.textContent = `Copy blocked (${result.reason}). Try: use the Copy button, keep the tab focused, allow clipboard in site settings, avoid embedded frames or guest mode.`;
     }
-    await writeWithAsyncClipboard();
-    copyStatus.textContent = "Copied to clipboard.";
-    showToast("Copied to clipboard");
   } catch (error) {
-    const name = error?.name || error?.message || "Error";
-    let text = "";
-    try {
-      text = await buildPlaintextText(activePayload, accessPhrase);
-      const ok = await fallbackExecCommandCopy(text);
-      if (ok) {
-        copyStatus.textContent = `Copied (fallback after ${name}).`;
-        showToast("Copied to clipboard");
-      } else {
-        copyStatus.textContent = `Copy blocked (${name}). Try: use the Copy button, keep the tab focused, allow clipboard in site settings, avoid embedded frames or guest mode.`;
-      }
-    } catch (fallbackError) {
-      copyStatus.textContent = `Copy blocked (${name}). Try: use the Copy button, keep the tab focused, allow clipboard in site settings, avoid embedded frames or guest mode.`;
-    } finally {
-      text = "";
-    }
+    const name = error?.name || "error";
+    copyStatus.textContent = `Copy blocked (${name}). Try: use the Copy button, keep the tab focused, allow clipboard in site settings, avoid embedded frames or guest mode.`;
+  } finally {
+    text = "";
   }
 }
 
@@ -1431,8 +1468,6 @@ parseSaveBtn.addEventListener("click", parseAndSave);
 outputEl.addEventListener("contextmenu", (event) => event.preventDefault());
 
 document.addEventListener("keydown", registerShortcuts);
-window.addEventListener("scroll", scheduleAutoLoad, { passive: true });
-window.addEventListener("resize", scheduleAutoLoad);
 
 ["click", "keydown", "mousemove", "scroll", "touchstart"].forEach((eventName) => {
   document.addEventListener(eventName, resetInactivityTimer, { passive: true });
