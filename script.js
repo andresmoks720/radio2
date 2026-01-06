@@ -876,10 +876,6 @@ async function parseAndUpload() {
     setStatus("Provide owner, repo, and target path.", true);
     return;
   }
-  if (!targetPath.endsWith(PARSED_EXTENSION)) {
-    setStatus(`Upload path must end with ${PARSED_EXTENSION}`, true);
-    return;
-  }
   if (!accessPhrase) {
     setStatus("Provide a session code and markdown content.", true);
     return;
@@ -921,7 +917,7 @@ async function parseAndUpload() {
     if (!response.ok) {
       throw new Error(await getGitHubError(response));
     }
-    setStatus("Parsed file uploaded.", false, true);
+    setStatus("Uploaded file.", false, true);
     parseContentInput.value = "";
     parseTitleInput.value = "";
     parseMessageInput.value = "";
