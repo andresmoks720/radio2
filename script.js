@@ -1149,14 +1149,22 @@ async function copyDeparsedContent() {
     }
     const ok = await fallbackExecCommandCopy(text);
     if (ok) {
-      copyStatus.textContent = "Copied (fallback mode).";
+      const detail =
+        result.reason && result.reason !== "unavailable"
+          ? ` Clipboard API blocked (${result.reason}).`
+          : "";
+      copyStatus.textContent = `Copied (fallback mode).${detail} Keep the tab focused and use https or localhost.`;
       showToast("Copied to clipboard");
     } else {
-      copyStatus.textContent = `Copy blocked (${result.reason}). Try: use the Copy button, keep the tab focused, allow clipboard in site settings, avoid embedded frames or guest mode.`;
+      const hint =
+        result.reason === "unavailable"
+          ? "Try https or localhost, and make sure the browser allows clipboard access."
+          : "Try: use the Copy button, keep the tab focused, allow clipboard access in site settings, avoid embedded frames or guest mode.";
+      copyStatus.textContent = `Copy blocked (${result.reason}). ${hint}`;
     }
   } catch (error) {
     const name = error?.name || "error";
-    copyStatus.textContent = `Copy blocked (${name}). Try: use the Copy button, keep the tab focused, allow clipboard in site settings, avoid embedded frames or guest mode.`;
+    copyStatus.textContent = `Copy blocked (${name}). Try: use the Copy button, keep the tab focused, allow clipboard access in site settings, avoid embedded frames or guest mode.`;
   } finally {
     text = "";
   }
