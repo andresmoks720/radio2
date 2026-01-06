@@ -593,7 +593,7 @@ async function handleRepoFileLoad(file) {
   if (deparsedCache.has(file.path)) {
     currentFilePath = file.path;
     await renderMarkdown(deparsedCache.get(file.path));
-    setStatus("Loaded cached de-parsed content.", false, true);
+    setStatus("Loaded cached content.", false, true);
     setOutputState("success");
     updateHistory(file.path, deparsedCache.get(file.path));
     renderFileGroups(getFilteredEntries([...allRepoEntries, ...bundleEntries]));
@@ -683,7 +683,7 @@ async function handleSampleLoad() {
     deparsedCache.set(path, markdown);
     currentFilePath = path;
     await renderMarkdown(markdown);
-    setStatus("Sample de-parsed successfully.", false, true);
+    setStatus("Sample processed successfully.", false, true);
     setOutputState("success");
     updateHistory(path, markdown);
     updatePreview({ name: path.split("/").pop(), path, parsed: true, size: JSON.stringify(payload).length });
@@ -722,7 +722,7 @@ async function handleFileLoad() {
     deparsedCache.set(file.name, markdown);
     currentFilePath = file.name;
     await renderMarkdown(markdown);
-    setStatus("Local file de-parsed successfully.", false, true);
+    setStatus("Local file processed successfully.", false, true);
     setOutputState("success");
     updateHistory(file.name, markdown);
     updatePreview({ name: file.name, path: file.name, parsed: true, size: file.size });
@@ -763,7 +763,7 @@ function resetInactivityTimer() {
   }
   inactivityTimer = setTimeout(() => {
     if (hasDeparsedContent) {
-      clearDeparsedContent("De-parsed content cleared after inactivity.");
+  clearDeparsedContent("Processed content cleared after inactivity.");
     }
   }, inactivityLimitMs);
 }
@@ -794,7 +794,7 @@ async function copyDeparsedContent() {
   }
   try {
     await navigator.clipboard.writeText(currentMarkdown);
-    copyStatus.textContent = "De-parsed content copied.";
+    copyStatus.textContent = "Processed content copied.";
     showToast("Copied to clipboard");
   } catch (error) {
     copyStatus.textContent = "Copy failed. Try selecting text manually.";
@@ -809,7 +809,7 @@ function exportText() {
   const blob = new Blob([currentMarkdown], { type: "text/plain" });
   const link = document.createElement("a");
   link.href = URL.createObjectURL(blob);
-  link.download = `${currentFilePath || "deparsed"}.txt`;
+  link.download = `${currentFilePath || "processed-content"}.txt`;
   link.click();
   URL.revokeObjectURL(link.href);
 }
@@ -993,7 +993,7 @@ window.addEventListener("beforeunload", (event) => {
 if (broadcast) {
   broadcast.onmessage = (event) => {
     if (event.data?.type === "deparsed" && hasDeparsedContent && event.data.file !== currentFilePath) {
-      clearDeparsedContent("Another tab de-parsed content. Cleared for safety.");
+      clearDeparsedContent("Another tab processed content. Cleared for safety.");
     }
   };
 }
