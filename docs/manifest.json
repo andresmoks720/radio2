@@ -1,0 +1,12 @@
+{
+  "samples": [
+    {
+      "label": "Welcome Note",
+      "path": "docs/welcome.json"
+    },
+    {
+      "label": "Handoff Notes",
+      "path": "docs/handoff.json"
+    }
+  ]
+}
