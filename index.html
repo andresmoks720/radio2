@@ -78,14 +78,15 @@
           </div>
 
           <div class="control-group">
-            <label for="repo-path">Repo Browser</label>
+            <label for="repo-path">Repo Browser (.md.data only)</label>
             <input id="repo-path" type="text" value="docs/" />
-            <button id="load-repo" type="button">Load path from GitHub</button>
+            <button id="load-repo" type="button">Load encrypted files</button>
             <div class="spinner" id="repo-spinner" aria-hidden="true"></div>
+            <small class="helper-text">Only encrypted markdown payloads (.md.data) are supported.</small>
           </div>
 
           <div class="control-group">
-            <label for="sample-select">Sample File</label>
+            <label for="sample-select">Sample Encrypted File</label>
             <select id="sample-select">
               <option value="">Loading samples...</option>
             </select>
@@ -93,8 +94,8 @@
           </div>
 
           <div class="control-group">
-            <label for="file-input">Local Parsed File</label>
-            <input id="file-input" type="file" accept=".json" />
+            <label for="file-input">Local Encrypted File (.md.data)</label>
+            <input id="file-input" type="file" accept=".json,.md.data" />
             <button id="load-file" type="button">Load File</button>
           </div>
 
@@ -109,8 +110,8 @@
           </div>
 
           <div class="control-group">
-            <label for="parse-title">Upload</label>
-            <input id="parse-title" type="text" placeholder="docs/new-file" />
+            <label for="parse-title">Upload encrypted payload (.md.data)</label>
+            <input id="parse-title" type="text" placeholder="docs/new-file.md.data" />
             <input id="parse-file" type="file" accept=".md" />
             <textarea id="parse-content" rows="4" placeholder="Markdown content"></textarea>
             <input id="parse-message" type="text" placeholder="Commit message (optional)" />
@@ -120,7 +121,7 @@
 
         <section class="repo-files">
           <div class="section-header">
-            <h2>Repo Files</h2>
+            <h2>Encrypted Repo Files (.md.data)</h2>
           </div>
           <ul id="repo-file-list" class="file-list"></ul>
         </section>
