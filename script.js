@@ -39,7 +39,7 @@ const parseMessageInput = document.getElementById("parse-message");
 const MANIFEST_URL = "docs/manifest.json";
 const FORMAT_VERSION = 2;
 const DEFAULT_INACTIVITY_MINUTES = 30;
-const ENCRYPTED_EXTENSION = ".md.data";
+const DATA_EXTENSION = ".md.data";
 const MARKDOWN_CHUNK_TARGET = 2000;
 const LIBRARIES = {
   marked: "vendor/marked.min.js",
@@ -335,8 +335,8 @@ async function renderNextChunk() {
   let scrambled = null;
   let markdown = "";
   try {
-    const decryptedBytes = await chunkDecoder(chunkEntry, chunkCursor - 1);
-    scrambled = scrambleBytes(decryptedBytes);
+    const decodedBytes = await chunkDecoder(chunkEntry, chunkCursor - 1);
+    scrambled = scrambleBytes(decodedBytes);
     markdown = descrambleToString(scrambled);
     await appendMarkdownChunk(markdown);
   } catch (error) {
@@ -388,25 +388,25 @@ async function encodeContent(markdown, accessPhrase) {
   return payloadCodec.encodePayloadChunks(chunks, accessPhrase, FORMAT_VERSION);
 }
 
-function isEncryptedPayloadFile(name) {
-  return name.endsWith(ENCRYPTED_EXTENSION);
+function isParsedPayloadFile(name) {
+  return name.endsWith(DATA_EXTENSION);
 }
 
-function assertEncryptedPayload(payload) {
+function assertPayloadFormat(payload) {
   if (!payload || typeof payload !== "object") {
-    throw new Error("Invalid encrypted payload.");
+    throw new Error("Invalid payload.");
   }
   if (typeof payload.version !== "number") {
-    throw new Error("Encrypted payload has invalid version.");
+    throw new Error("Payload has invalid version.");
   }
   if (payload.version !== FORMAT_VERSION) {
     throw new Error(`Unsupported format version: ${payload.version}`);
   }
   if (typeof payload.seed !== "string" || payload.seed.trim() === "") {
-    throw new Error("Encrypted payload has invalid data.");
+    throw new Error("Payload has invalid data.");
   }
   if (!Array.isArray(payload.chunks) || payload.chunks.length === 0) {
-    throw new Error("Encrypted payload is missing chunk data.");
+    throw new Error("Payload is missing chunk data.");
   }
   payload.chunks.forEach((chunk) => {
     if (
@@ -416,7 +416,7 @@ function assertEncryptedPayload(payload) {
       typeof chunk.payload !== "string" ||
       chunk.payload.trim() === ""
     ) {
-      throw new Error("Encrypted payload has invalid chunk data.");
+      throw new Error("Payload has invalid chunk data.");
     }
   });
 }
@@ -430,7 +430,7 @@ function updatePreview(file) {
     previewMeta.textContent = "Select a file to preview.";
     return;
   }
-  const status = file.encrypted ? "Encrypted (.md.data)" : "Unsupported";
+  const status = file.isParsed ? "Parsed (.md.data)" : "Unsupported";
   const size = file.size ? `${file.size} bytes` : "Unknown size";
   previewMeta.textContent = `${file.name} · ${status} · ${size}`;
 }
@@ -472,7 +472,7 @@ function renderFileGroups(entries) {
   clearRepoFileList();
   if (!entries.length) {
     const empty = document.createElement("li");
-    empty.textContent = "No encrypted markdown files (.md.data) found.";
+    empty.textContent = "No parsed markdown files (.md.data) found.";
     repoFileList.appendChild(empty);
     return;
   }
@@ -544,11 +544,11 @@ function normalizeRepoPath(path) {
   return trimmed.replace(/^\/+|\/+$/g, "");
 }
 
-function ensureEncryptedExtension(path) {
+function ensurePayloadExtension(path) {
   if (!path) {
     return "";
   }
-  return path.endsWith(ENCRYPTED_EXTENSION) ? path : `${path}${ENCRYPTED_EXTENSION}`;
+  return path.endsWith(DATA_EXTENSION) ? path : `${path}${DATA_EXTENSION}`;
 }
 
 function getRepoCategory(entryPath, rootPath) {
@@ -577,12 +577,12 @@ async function fetchRepoEntries(owner, repo, branch, path, rootPath = path) {
     if (entry.type === "dir") {
       const nested = await fetchRepoEntries(owner, repo, branch, entry.path, rootPath);
       files.push(...nested);
-    } else if (entry.type === "file" && isEncryptedPayloadFile(entry.name)) {
+    } else if (entry.type === "file" && isParsedPayloadFile(entry.name)) {
       const category = getRepoCategory(entry.path, rootPath);
       files.push({
         name: entry.name,
         path: entry.path,
-        encrypted: isEncryptedPayloadFile(entry.name),
+        isParsed: isParsedPayloadFile(entry.name),
         category: category || "Root",
         source: "repo",
         size: entry.size,
@@ -659,7 +659,7 @@ async function loadRepoFiles() {
     updateCategoryOptions(combined);
     renderFileGroups(getFilteredEntries(combined));
     setStatus(
-      `Loaded ${allRepoEntries.length} encrypted payload files (.md.data) from ${displayPath}.`,
+      `Loaded ${allRepoEntries.length} parsed payload files (.md.data) from ${displayPath}.`,
       false,
       true
     );
@@ -696,8 +696,8 @@ function getAccessPhraseForFile(path, provided) {
 }
 
 async function handleRepoFileLoad(file) {
-  if (!file.encrypted) {
-    setStatus("Only encrypted markdown payloads (.md.data) are supported.", true);
+  if (!file.isParsed) {
+    setStatus("Only parsed markdown payloads (.md.data) are supported.", true);
     return;
   }
   const owner = repoOwnerInput.value.trim();
@@ -715,12 +715,12 @@ async function handleRepoFileLoad(file) {
     return;
   }
 
-  if (file.encrypted && !getAccessPhraseForFile(file.path, accessPhrase)) {
+  if (file.isParsed && !getAccessPhraseForFile(file.path, accessPhrase)) {
     setStatus("Enter a session code before de-parsing files.", true);
     return;
   }
 
-  setStatus("Loading encrypted payload...");
+  setStatus("Loading payload...");
   setOutputState("");
   try {
     let payloadSize = file.size || 0;
@@ -730,12 +730,12 @@ async function handleRepoFileLoad(file) {
       if (!payload) {
         throw new Error(`Missing export data for ${file.path}.`);
       }
-      assertEncryptedPayload(payload);
+      assertPayloadFormat(payload);
       payloadSize = JSON.stringify(payload).length;
     } else {
       const response = await fetchRawFile(owner, repo, branch, file.path, token);
       payload = await response.json();
-      assertEncryptedPayload(payload);
+      assertPayloadFormat(payload);
       parsedCache.set(file.path, payload);
       payloadSize = JSON.stringify(payload).length;
     }
@@ -795,19 +795,19 @@ async function handleSampleLoad() {
   try {
     const response = await fetch(path, { cache: "no-store" });
     const payload = await response.json();
-    assertEncryptedPayload(payload);
+    assertPayloadFormat(payload);
     parsedCache.set(path, payload);
     currentFilePath = path;
     await renderMarkdown(payload, getAccessPhraseForFile(path, accessPhrase));
     setStatus("Sample processed successfully.", false, true);
     setOutputState("success");
     updateHistory(path, JSON.stringify(payload).length);
-    updatePreview({ name: path.split("/").pop(), path, encrypted: true, size: JSON.stringify(payload).length });
+    updatePreview({ name: path.split("/").pop(), path, isParsed: true, size: JSON.stringify(payload).length });
     if (broadcast) {
       broadcast.postMessage({ type: "content", file: path });
     }
   } catch (error) {
-    setStatus(`Failed to de-parse sample: ${error.message}`, true);
+    setStatus(`Failed to process sample: ${error.message}`, true);
     setOutputState("error");
   }
 }
@@ -817,7 +817,7 @@ async function handleFileLoad() {
   const accessPhrase = accessPhraseInput.value.trim();
 
   if (!file) {
-    setStatus("Choose a local encrypted payload file first.", true);
+    setStatus("Choose a local parsed payload file first.", true);
     return;
   }
 
@@ -832,19 +832,19 @@ async function handleFileLoad() {
   try {
     const contents = await file.text();
     const payload = JSON.parse(contents);
-    assertEncryptedPayload(payload);
+    assertPayloadFormat(payload);
     parsedCache.set(file.name, payload);
     currentFilePath = file.name;
     await renderMarkdown(payload, getAccessPhraseForFile(file.name, accessPhrase));
     setStatus("Local file processed successfully.", false, true);
     setOutputState("success");
     updateHistory(file.name, file.size);
-    updatePreview({ name: file.name, path: file.name, encrypted: true, size: file.size });
+    updatePreview({ name: file.name, path: file.name, isParsed: true, size: file.size });
     if (broadcast) {
       broadcast.postMessage({ type: "content", file: file.name });
     }
   } catch (error) {
-    setStatus(`Failed to de-parse file: ${error.message}`, true);
+    setStatus(`Failed to process file: ${error.message}`, true);
     setOutputState("error");
   }
 }
@@ -951,7 +951,7 @@ function renderSearchResults(results, query) {
 
 async function renderChunkAtIndex(index) {
   if (!activePayload) {
-    setStatus("Load an encrypted file before opening a result.", true);
+    setStatus("Load a parsed file before opening a result.", true);
     return;
   }
   const accessPhrase = getAccessPhraseForFile(currentFilePath);
@@ -1095,13 +1095,13 @@ async function importBundle() {
     bundleEntries = bundle.files.map((entry) => ({
       name: entry.path.split("/").pop(),
       path: entry.path,
-      encrypted: true,
+      isParsed: true,
       category: "Imported Bundle",
       source: "bundle",
       size: JSON.stringify(entry.payload).length,
     }));
     bundle.files.forEach((entry) => {
-      assertEncryptedPayload(entry.payload);
+      assertPayloadFormat(entry.payload);
       parsedCache.set(entry.path, entry.payload);
     });
     const combined = [...allRepoEntries, ...bundleEntries];
@@ -1117,7 +1117,7 @@ async function parseAndUpload() {
   const owner = repoOwnerInput.value.trim();
   const repo = repoNameInput.value.trim();
   const branch = repoBranchInput.value.trim() || "main";
-  const targetPath = ensureEncryptedExtension(parseTitleInput.value.trim());
+  const targetPath = ensurePayloadExtension(parseTitleInput.value.trim());
   const accessPhrase = accessPhraseInput.value.trim();
   const token = getAuthToken();
   const commitMessage = parseMessageInput.value.trim();
@@ -1131,7 +1131,7 @@ async function parseAndUpload() {
     return;
   }
   if (!token) {
-    setStatus("GitHub token required to upload encrypted payload files.", true);
+    setStatus("GitHub token required to upload payload files.", true);
     return;
   }
 
@@ -1150,7 +1150,7 @@ async function parseAndUpload() {
     parseFileInput.value = "";
     markdown = "";
     const body = {
-      message: commitMessage || `Add encrypted payload ${targetPath}`,
+      message: commitMessage || `Add payload ${targetPath}`,
       content: btoa(JSON.stringify(payload)),
       branch,
     };

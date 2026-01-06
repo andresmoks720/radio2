@@ -170,16 +170,6 @@ button:hover {
   display: inline-block;
 }
 
-.strength-meter {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.strength-meter meter {
-  width: 120px;
-}
-
 .status {
   min-height: 24px;
   padding: 8px 12px;

@@ -7,6 +7,9 @@ Reduce how long plaintext exists, how much exists at once, and where it can leak
 
 Assume: if plaintext exists in RAM as a big JS string, it’s effectively “there for anyone who can read process memory.”
 
+## Vocabulary restriction
+This file is the only location in the repo that may include sensitive vocabulary. All other files must avoid conspicuous terms in UI text, comments, identifiers, and string literals. Prohibited terms elsewhere include: “encrypted”, “encrypt”, “decrypt”, “decrypted”, “encryption”, “secret”, “secure”, “confidential”, “cipher”, “private”, “sensitive”, and similar words.
+
 ---
 
 ## Primary intent

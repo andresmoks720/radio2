@@ -1,9 +1,9 @@
-const CACHE_NAME = "encrypted-content-v1";
-const ENCRYPTED_EXTENSION = ".md.data";
+const CACHE_NAME = "payload-cache-v1";
+const DATA_EXTENSION = ".md.data";
 
-function isEncryptedRequest(request) {
+function isPayloadRequest(request) {
   const url = new URL(request.url);
-  return url.pathname.endsWith(ENCRYPTED_EXTENSION);
+  return url.pathname.endsWith(DATA_EXTENSION);
 }
 
 function isPlaintextMarkdownRequest(request) {
@@ -54,7 +54,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  if (!isEncryptedRequest(event.request)) {
+  if (!isPayloadRequest(event.request)) {
     return;
   }
 
