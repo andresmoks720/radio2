@@ -38,7 +38,6 @@ const parseMessageInput = document.getElementById("parse-message");
 
 const MANIFEST_URL = "docs/manifest.json";
 const FORMAT_VERSION = 1;
-const PBKDF2_ITERATIONS = 100000;
 const DEFAULT_INACTIVITY_MINUTES = 30;
 const TOKEN_BATCH_SIZE = 80;
 const LIBRARIES = {
@@ -48,12 +47,11 @@ const LIBRARIES = {
   highlightCss: "vendor/github-dark.css",
 };
 
-const textEncoder = new TextEncoder();
-const textDecoder = new TextDecoder();
 const deparsedCache = new Map();
 const parsedCache = new Map();
 const accessPhraseStore = new Map();
 const historyStore = new Map();
+const payloadCodec = window.payloadCodec || {};
 
 let hasDeparsedContent = false;
 let inactivityTimer = null;
@@ -280,91 +278,18 @@ async function renderMarkdown(markdown) {
   perfIndicator.textContent = `Render: ${duration}ms`;
 }
 
-function parseBase64(value) {
-  const bin = atob(value);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i += 1) {
-    bytes[i] = bin.charCodeAt(i);
+async function encodeContent(markdown, accessPhrase) {
+  if (!payloadCodec.encodePayload) {
+    throw new Error("Encoding module unavailable.");
   }
-  return bytes;
+  return payloadCodec.encodePayload(markdown, accessPhrase, FORMAT_VERSION);
 }
 
-function toBase64(bytes) {
-  const chunkSize = 0x8000;
-  const chunks = [];
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    chunks.push(String.fromCharCode(...bytes.subarray(i, i + chunkSize)));
+async function decodeContent(payload, accessPhrase) {
+  if (!payloadCodec.decodePayload) {
+    throw new Error("Decoding module unavailable.");
   }
-  return btoa(chunks.join(""));
-}
-
-async function deriveAccessKey(accessPhrase, seed, usages) {
-  const keyMaterial = await crypto.subtle.importKey(
-    "raw",
-    textEncoder.encode(accessPhrase),
-    "PBKDF2",
-    false,
-    ["deriveKey"]
-  );
-
-  return crypto.subtle.deriveKey(
-    {
-      name: "PBKDF2",
-      salt: seed,
-      iterations: PBKDF2_ITERATIONS,
-      hash: "SHA-256",
-    },
-    keyMaterial,
-    { name: "AES-GCM", length: 256 },
-    false,
-    usages
-  );
-}
-
-async function parseMarkdown(markdown, accessPhrase) {
-  const seed = crypto.getRandomValues(new Uint8Array(16));
-  const offset = crypto.getRandomValues(new Uint8Array(12));
-  const key = await deriveAccessKey(accessPhrase, seed, ["encrypt"]);
-  const payloadBuffer = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv: offset },
-    key,
-    textEncoder.encode(markdown)
-  );
-
-  const payload = {
-    version: FORMAT_VERSION,
-    seed: toBase64(seed),
-    offset: toBase64(offset),
-    payload: toBase64(new Uint8Array(payloadBuffer)),
-  };
-
-  seed.fill(0);
-  offset.fill(0);
-  return payload;
-}
-
-async function deparsePayload(payload, accessPhrase) {
-  if (payload.version !== FORMAT_VERSION) {
-    throw new Error(`Unsupported format version: ${payload.version}`);
-  }
-  const seed = parseBase64(payload.seed);
-  const offset = parseBase64(payload.offset);
-  const payloadBytes = parseBase64(payload.payload);
-
-  const key = await deriveAccessKey(accessPhrase, seed, ["decrypt"]);
-  const resultBuffer = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: offset },
-    key,
-    payloadBytes
-  );
-
-  const resultBytes = new Uint8Array(resultBuffer);
-  const parsed = textDecoder.decode(resultBytes);
-  seed.fill(0);
-  offset.fill(0);
-  payloadBytes.fill(0);
-  resultBytes.fill(0);
-  return parsed;
+  return payloadCodec.decodePayload(payload, accessPhrase, FORMAT_VERSION);
 }
 
 function isParsedFile(name) {
@@ -686,13 +611,13 @@ async function handleRepoFileLoad(file) {
       if (!payload) {
         throw new Error(`Missing bundle payload for ${file.path}.`);
       }
-      markdown = await deparsePayload(payload, getAccessPhraseForFile(file.path, accessPhrase));
+      markdown = await decodeContent(payload, getAccessPhraseForFile(file.path, accessPhrase));
     } else {
       const response = await fetchRawFile(owner, repo, branch, file.path, token);
       if (file.parsed) {
         const payload = await response.json();
         parsedCache.set(file.path, payload);
-        markdown = await deparsePayload(payload, getAccessPhraseForFile(file.path, accessPhrase));
+        markdown = await decodeContent(payload, getAccessPhraseForFile(file.path, accessPhrase));
       } else {
         markdown = await response.text();
       }
@@ -756,7 +681,7 @@ async function handleSampleLoad() {
     const response = await fetch(path, { cache: "no-store" });
     const payload = await response.json();
     parsedCache.set(path, payload);
-    let markdown = await deparsePayload(payload, getAccessPhraseForFile(path, accessPhrase));
+    let markdown = await decodeContent(payload, getAccessPhraseForFile(path, accessPhrase));
     deparsedCache.set(path, markdown);
     currentFilePath = path;
     await renderMarkdown(markdown);
@@ -795,7 +720,7 @@ async function handleFileLoad() {
     const contents = await file.text();
     const payload = JSON.parse(contents);
     parsedCache.set(file.name, payload);
-    let markdown = await deparsePayload(payload, getAccessPhraseForFile(file.name, accessPhrase));
+    let markdown = await decodeContent(payload, getAccessPhraseForFile(file.name, accessPhrase));
     deparsedCache.set(file.name, markdown);
     currentFilePath = file.name;
     await renderMarkdown(markdown);
@@ -1000,7 +925,7 @@ async function parseAndUpload() {
       setStatus("Provide an access phrase and markdown content.", true);
       return;
     }
-    const payload = await parseMarkdown(markdown, accessPhrase);
+    const payload = await encodeContent(markdown, accessPhrase);
     const body = {
       message: commitMessage || `Add parsed file ${targetPath}`,
       content: btoa(JSON.stringify(payload)),
