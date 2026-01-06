@@ -269,7 +269,9 @@ button:hover {
 }
 
 :root[data-theme="light"] .markdown pre {
-  background: #1f2430;
+  background: #eef1f7;
+  color: #1c2230;
+  border: 1px solid rgba(28, 34, 48, 0.12);
 }
 
 .markdown a {
