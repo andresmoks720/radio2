@@ -958,10 +958,6 @@ async function parseAndUpload() {
     setStatus("Provide owner, repo, and target path.", true);
     return;
   }
-  if (!targetPath.endsWith(".md.enc")) {
-    setStatus("Upload path must end with .md.enc", true);
-    return;
-  }
   if (!accessPhrase) {
     setStatus("Provide an access phrase and markdown content.", true);
     return;
@@ -1003,7 +999,7 @@ async function parseAndUpload() {
     if (!response.ok) {
       throw new Error(await getGitHubError(response));
     }
-    setStatus("Parsed file uploaded.", false, true);
+    setStatus("Uploaded file.", false, true);
     parseContentInput.value = "";
     parseTitleInput.value = "";
     parseMessageInput.value = "";
