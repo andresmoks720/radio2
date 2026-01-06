@@ -11,6 +11,7 @@ const repoBranchInput = document.getElementById("repo-branch");
 const loadRepoBtn = document.getElementById("load-repo");
 const repoFileList = document.getElementById("repo-file-list");
 const repoTokenInput = document.getElementById("repo-token");
+const repoPathInput = document.getElementById("repo-path");
 const inactivityTimeoutInput = document.getElementById("inactivity-timeout");
 const repoSpinner = document.getElementById("repo-spinner");
 const accessToggle = document.getElementById("toggle-access");
@@ -493,8 +494,24 @@ function getFilteredEntries(entries) {
   return filterByCategory(filterEntries(entries, query));
 }
 
-async function fetchRepoEntries(owner, repo, branch, path = "docs") {
-  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}?ref=${branch}`;
+function normalizeRepoPath(path) {
+  const trimmed = path.trim();
+  if (!trimmed) {
+    return "docs";
+  }
+  return trimmed.replace(/^\/+|\/+$/g, "");
+}
+
+function getRepoCategory(entryPath, rootPath) {
+  const normalizedRoot = rootPath ? rootPath.replace(/\/+$/g, "") : "";
+  const prefix = normalizedRoot ? `${normalizedRoot}/` : "";
+  const relative = entryPath.startsWith(prefix) ? entryPath.slice(prefix.length) : entryPath;
+  return relative.split("/").slice(0, -1).join("/");
+}
+
+async function fetchRepoEntries(owner, repo, branch, path, rootPath = path) {
+  const pathSegment = path ? `/${path}` : "";
+  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents${pathSegment}?ref=${branch}`;
   const response = await fetchWithRetry(apiUrl, {
     headers: buildAuthHeaders(),
     cache: "no-store",
@@ -509,10 +526,10 @@ async function fetchRepoEntries(owner, repo, branch, path = "docs") {
   const files = [];
   for (const entry of entries) {
     if (entry.type === "dir") {
-      const nested = await fetchRepoEntries(owner, repo, branch, entry.path);
+      const nested = await fetchRepoEntries(owner, repo, branch, entry.path, rootPath);
       files.push(...nested);
     } else if (entry.type === "file" && isMarkdownFile(entry.name)) {
-      const category = entry.path.replace("docs/", "").split("/").slice(0, -1).join("/");
+      const category = getRepoCategory(entry.path, rootPath);
       files.push({
         name: entry.name,
         path: entry.path,
@@ -571,6 +588,8 @@ async function loadRepoFiles() {
   const owner = repoOwnerInput.value.trim();
   const repo = repoNameInput.value.trim();
   const branch = repoBranchInput.value.trim() || "main";
+  const repoPath = normalizeRepoPath(repoPathInput.value);
+  const displayPath = repoPath ? `${repoPath}/` : "repo root";
 
   if (!owner || !repo) {
     setStatus("Enter a GitHub owner and repository name.", true);
@@ -584,13 +603,13 @@ async function loadRepoFiles() {
   }
 
   setRepoLoading(true);
-  setStatus("Loading docs/ listing from GitHub...");
+  setStatus(`Loading ${displayPath} listing from GitHub...`);
   try {
-    allRepoEntries = await fetchRepoEntries(owner, repo, branch);
+    allRepoEntries = await fetchRepoEntries(owner, repo, branch, repoPath);
     const combined = [...allRepoEntries, ...bundleEntries];
     updateCategoryOptions(combined);
     renderFileGroups(getFilteredEntries(combined));
-    setStatus(`Loaded ${allRepoEntries.length} markdown files from docs/.`, false, true);
+    setStatus(`Loaded ${allRepoEntries.length} markdown files from ${displayPath}.`, false, true);
   } catch (error) {
     renderFileGroups([]);
     setStatus(`Failed to load repo files: ${error.message}`, true);
