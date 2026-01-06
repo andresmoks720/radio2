@@ -40,6 +40,7 @@ const FORMAT_VERSION = 1;
 const PBKDF2_ITERATIONS = 100000;
 const DEFAULT_INACTIVITY_MINUTES = 30;
 const TOKEN_BATCH_SIZE = 80;
+const PARSED_EXTENSION = ".md.data";
 const LIBRARIES = {
   marked: "vendor/marked.min.js",
   dompurify: "vendor/purify.min.js",
@@ -367,7 +368,7 @@ async function deparsePayload(payload, accessPhrase) {
 }
 
 function isParsedFile(name) {
-  return name.endsWith(".md.enc") || name.endsWith(".json");
+  return name.endsWith(PARSED_EXTENSION);
 }
 
 function isMarkdownFile(name) {
@@ -958,8 +959,8 @@ async function parseAndUpload() {
     setStatus("Provide owner, repo, and target path.", true);
     return;
   }
-  if (!targetPath.endsWith(".md.enc")) {
-    setStatus("Upload path must end with .md.enc", true);
+  if (!targetPath.endsWith(PARSED_EXTENSION)) {
+    setStatus(`Upload path must end with ${PARSED_EXTENSION}`, true);
     return;
   }
   if (!accessPhrase) {
