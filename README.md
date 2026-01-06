@@ -1,6 +1,6 @@
-# Encrypted Markdown Reader
+# Markdown-Parser-Homework
 
-A client-side markdown reader that decrypts encrypted markdown files directly in the browser. Designed for GitHub Pages deployment with **no server-side dependencies**.
+A client-side markdown parser and viewer that works directly in the browser. Designed for GitHub Pages deployment with **no server-side dependencies**.
 
 ## Features
 - AES-256-GCM encryption with PBKDF2 key derivation
